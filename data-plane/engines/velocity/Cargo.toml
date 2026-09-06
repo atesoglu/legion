@@ -1,0 +1,19 @@
+[package]
+name = "legion-velocity"
+description = "Deterministic velocity signal computation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+legion-common.workspace = true
+legion-proto.workspace = true
+legion-platform.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tonic.workspace = true
+tracing.workspace = true

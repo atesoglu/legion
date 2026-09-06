@@ -1,0 +1,13 @@
+[package]
+name = "legion-common"
+description = "Shared value types for Legion's deterministic risk computation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]

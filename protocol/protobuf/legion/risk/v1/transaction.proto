@@ -1,0 +1,194 @@
+// The payment risk subject and the evidence supplied with it.
+//
+// Legion's long-term domain model is `risk subject -> evidence -> signals ->
+// decision`. In the payment domain the risk subject is a Transaction. Nothing
+// in this file assumes a payment-only future, but no other domain is modelled
+// yet; see docs/domain-model.md.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+import "google/protobuf/timestamp.proto";
+import "legion/common/v1/types.proto";
+
+// Channel is the acceptance environment of the transaction. It changes which
+// signals are meaningful: device novelty is strong online and weak at a
+// physical terminal.
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;
+  CHANNEL_CARD_PRESENT = 1;
+  CHANNEL_ECOMMERCE = 2;
+  CHANNEL_MAIL_OR_TELEPHONE_ORDER = 3;
+  CHANNEL_WALLET = 4;
+  CHANNEL_ACCOUNT_TO_ACCOUNT = 5;
+  CHANNEL_ATM = 6;
+}
+
+// TransactionType is the monetary intent of the request.
+enum TransactionType {
+  TRANSACTION_TYPE_UNSPECIFIED = 0;
+  TRANSACTION_TYPE_PURCHASE = 1;
+  TRANSACTION_TYPE_AUTHORIZATION_ONLY = 2;
+  TRANSACTION_TYPE_REFUND = 3;
+  TRANSACTION_TYPE_WITHDRAWAL = 4;
+  TRANSACTION_TYPE_TRANSFER = 5;
+}
+
+// AuthenticationMethod records how, if at all, the payer was authenticated.
+enum AuthenticationMethod {
+  AUTHENTICATION_METHOD_UNSPECIFIED = 0;
+  AUTHENTICATION_METHOD_NONE = 1;
+  AUTHENTICATION_METHOD_PIN = 2;
+  AUTHENTICATION_METHOD_THREE_DS_CHALLENGE = 3;
+  AUTHENTICATION_METHOD_THREE_DS_FRICTIONLESS = 4;
+  AUTHENTICATION_METHOD_BIOMETRIC = 5;
+  AUTHENTICATION_METHOD_DEVICE_BINDING = 6;
+}
+
+// LocationSource records how a location was obtained. A billing address and a
+// GPS fix are not interchangeable inputs to an impossible-travel rule.
+enum LocationSource {
+  LOCATION_SOURCE_UNSPECIFIED = 0;
+  LOCATION_SOURCE_TERMINAL = 1;
+  LOCATION_SOURCE_IP_GEOLOCATION = 2;
+  LOCATION_SOURCE_DEVICE_GNSS = 3;
+  LOCATION_SOURCE_BILLING_ADDRESS = 4;
+  LOCATION_SOURCE_MERCHANT_DECLARED = 5;
+}
+
+// DeviceFormFactor is a coarse device class. Legion does not transport raw
+// user agents or fingerprint blobs across service boundaries.
+enum DeviceFormFactor {
+  DEVICE_FORM_FACTOR_UNSPECIFIED = 0;
+  DEVICE_FORM_FACTOR_MOBILE = 1;
+  DEVICE_FORM_FACTOR_DESKTOP = 2;
+  DEVICE_FORM_FACTOR_TABLET = 3;
+  DEVICE_FORM_FACTOR_POS_TERMINAL = 4;
+  DEVICE_FORM_FACTOR_ATM = 5;
+  DEVICE_FORM_FACTOR_SERVER = 6;
+}
+
+// Account is the party whose risk is being assessed.
+message Account {
+  legion.common.v1.PseudonymousId id = 1;
+
+  // When the account relationship began. Used for account-age features.
+  google.protobuf.Timestamp opened_at = 2;
+
+  // ISO 3166-1 alpha-2 country of record.
+  string home_country_code = 3;
+
+  // Coarse product or portfolio segment, for example "retail" or "sme".
+  // Free-form strings with unbounded cardinality are not permitted here.
+  string segment = 4;
+}
+
+// Instrument is the payment instrument, already tokenised upstream. Legion
+// never receives a primary account number.
+message Instrument {
+  legion.common.v1.PseudonymousId id = 1;
+
+  // Payment scheme or rail, for example "visa", "sepa_ct".
+  string scheme = 2;
+
+  // Country of issuance, ISO 3166-1 alpha-2.
+  string issuer_country_code = 3;
+
+  google.protobuf.Timestamp issued_at = 4;
+}
+
+// Device is the endpoint that initiated the transaction.
+message Device {
+  legion.common.v1.PseudonymousId id = 1;
+  DeviceFormFactor form_factor = 2;
+
+  // Operating system family, for example "ios", "android", "windows".
+  string os_family = 3;
+
+  // Pseudonymised network address the request originated from.
+  legion.common.v1.PseudonymousId network_address = 4;
+
+  // True when the caller's own device intelligence flags tampering. Legion
+  // treats this as evidence, not as a decision.
+  bool integrity_compromised = 5;
+}
+
+// Location is a coarse geographic position. Legion deliberately carries
+// reduced precision: impossible-travel detection does not need metre accuracy
+// and full precision would increase the sensitivity of the data set.
+message Location {
+  // ISO 3166-1 alpha-2.
+  string country_code = 1;
+
+  // Optional ISO 3166-2 subdivision.
+  string subdivision_code = 2;
+
+  // Decimal degrees, rounded to the precision indicated by
+  // accuracy_radius_metres. Zero-valued when only country is known.
+  double latitude = 3;
+  double longitude = 4;
+
+  // Radius within which the true position is expected to lie. Larger values
+  // must widen the tolerance of geographic rules.
+  uint32 accuracy_radius_metres = 5;
+
+  LocationSource source = 6;
+}
+
+// Merchant is the acceptor of the transaction.
+message Merchant {
+  legion.common.v1.PseudonymousId id = 1;
+
+  // ISO 18245 merchant category code.
+  string category_code = 2;
+
+  string country_code = 3;
+}
+
+// AuthenticationContext describes upstream authentication of the payer.
+message AuthenticationContext {
+  AuthenticationMethod method = 1;
+
+  // Whether strong customer authentication was actually performed.
+  bool strong_authentication_performed = 2;
+
+  // Whether the acquirer or issuer applied an exemption.
+  bool exemption_applied = 3;
+}
+
+// UntrustedText wraps any field whose content originates from a party outside
+// the trust boundary (payer, merchant, third-party enrichment).
+//
+// Untrusted text is never interpolated into a model prompt as instructions and
+// never used to build queries. It is carried explicitly so that every consumer
+// is forced to acknowledge its provenance; see docs/threat-model.md (T-05).
+message UntrustedText {
+  string value = 1;
+
+  // Where the text came from, for example "payer_reference",
+  // "merchant_descriptor".
+  string source = 2;
+}
+
+// Transaction is the risk subject of an evaluation request.
+message Transaction {
+  legion.common.v1.PseudonymousId id = 1;
+
+  // When the transaction occurred at the source system, not when Legion saw
+  // it. Velocity windows are computed against this timestamp.
+  google.protobuf.Timestamp occurred_at = 2;
+
+  TransactionType type = 3;
+  Channel channel = 4;
+  legion.common.v1.Money amount = 5;
+
+  Account account = 6;
+  Instrument instrument = 7;
+  Device device = 8;
+  Location location = 9;
+  Merchant merchant = 10;
+  AuthenticationContext authentication = 11;
+
+  // Payer- or merchant-supplied free text. Optional and always untrusted.
+  repeated UntrustedText annotations = 12;
+}

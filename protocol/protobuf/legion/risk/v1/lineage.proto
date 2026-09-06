@@ -1,0 +1,79 @@
+// Decision lineage.
+//
+// Lineage is what makes a decision reproducible and auditable. It records the
+// exact versions of everything that could have changed the outcome, plus the
+// timing that explains where the request deadline went.
+//
+// Lineage deliberately does not contain the transaction payload. It contains
+// pseudonymous identifiers and version pins; the payload is recoverable from
+// the replay data set when replay is authorised.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "legion/common/v1/failure.proto";
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/decision.proto";
+import "legion/risk/v1/signal.proto";
+
+// ExecutionSpan is one timed stage of the request, used to account for the
+// end-to-end deadline budget.
+message ExecutionSpan {
+  // Stage name from a closed set, for example "feature_fetch",
+  // "deterministic_agents", "behavioral_agent", "sentinel".
+  string stage = 1;
+
+  google.protobuf.Duration elapsed = 2;
+
+  // Budget the orchestrator allocated to this stage for this request.
+  google.protobuf.Duration budget = 3;
+}
+
+// GovernedVersions pins every artefact that can change a decision. If two
+// replays of the same input with the same GovernedVersions differ, that is a
+// determinism defect.
+message GovernedVersions {
+  repeated legion.common.v1.Version agents = 1;
+  legion.common.v1.Version policy = 2;
+  legion.common.v1.Version feature_catalogue = 3;
+
+  // Present only when the behavioural agent participated.
+  legion.common.v1.Version model = 4;
+  legion.common.v1.Version prompt = 5;
+  legion.common.v1.Version output_schema = 6;
+
+  // Version of the protobuf contract set in use.
+  legion.common.v1.Version contract = 7;
+}
+
+// DecisionLineage is emitted for every evaluation, including shadow-mode ones.
+message DecisionLineage {
+  // Server-assigned identifier for this evaluation.
+  string decision_id = 1;
+
+  // Pseudonymous identifier of the subject transaction.
+  legion.common.v1.PseudonymousId transaction_id = 2;
+
+  google.protobuf.Timestamp decided_at = 3;
+
+  DecisionOutcome outcome = 4;
+
+  // Every agent invocation, successful or not.
+  repeated AgentEvaluation evaluations = 5;
+
+  GovernedVersions versions = 6;
+  repeated ExecutionSpan spans = 7;
+
+  // Deadline the caller granted, and what was actually consumed.
+  google.protobuf.Duration deadline = 8;
+  google.protobuf.Duration total_elapsed = 9;
+
+  // Dependency failures observed during the request.
+  repeated legion.common.v1.Failure failures = 10;
+
+  // True when this evaluation did not affect the caller's authoritative
+  // decision; see ADR-012.
+  bool shadow = 11;
+}

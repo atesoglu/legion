@@ -1,0 +1,69 @@
+// Legion common value types.
+//
+// This package holds primitives that are shared by every other Legion
+// package. It must never depend on another Legion package.
+syntax = "proto3";
+
+package legion.common.v1;
+
+// Money is an exact monetary amount. Legion never represents money as a
+// floating point value: risk thresholds and aggregations must be reproducible
+// bit-for-bit across Go and Rust.
+message Money {
+  // ISO 4217 alphabetic currency code, uppercase (for example "EUR").
+  string currency_code = 1;
+
+  // Amount in the minor unit of currency_code (cents for EUR). May be
+  // negative for refunds and reversals.
+  int64 minor_units = 2;
+}
+
+// PseudonymousId is a keyed pseudonym for a persistent real-world identifier
+// (account number, card PAN token, device fingerprint, IP address).
+//
+// The value is produced with HMAC-SHA-256 over the source identifier using a
+// rotating platform key. Unsalted digests are not permitted because the input
+// domain of most payment identifiers is small enough to enumerate.
+//
+// Pseudonymisation reduces exposure. It does not, by itself, remove data
+// protection obligations; see docs/security-boundaries.md.
+message PseudonymousId {
+  // Lowercase hex encoding of the HMAC-SHA-256 output.
+  string value = 1;
+
+  // Identifier of the HMAC key used, so that pseudonyms remain joinable
+  // across a key rotation boundary and can be invalidated deliberately.
+  string key_version = 2;
+
+  // The kind of identifier that was pseudonymised, so that pseudonyms from
+  // different domains are never compared to each other by accident.
+  IdentifierDomain domain = 3;
+}
+
+// IdentifierDomain namespaces a pseudonym. The domain is part of the HMAC
+// input, so the same raw value in two domains yields two different pseudonyms.
+enum IdentifierDomain {
+  IDENTIFIER_DOMAIN_UNSPECIFIED = 0;
+  IDENTIFIER_DOMAIN_ACCOUNT = 1;
+  IDENTIFIER_DOMAIN_INSTRUMENT = 2;
+  IDENTIFIER_DOMAIN_DEVICE = 3;
+  IDENTIFIER_DOMAIN_NETWORK_ADDRESS = 4;
+  IDENTIFIER_DOMAIN_MERCHANT = 5;
+  IDENTIFIER_DOMAIN_TRANSACTION = 6;
+}
+
+// Version pins one governed artefact of the platform. Every artefact that can
+// change a decision must be representable as a Version so that decisions are
+// reproducible; see docs/decision-model.md.
+message Version {
+  // Stable name of the artefact, for example "velocity-agent" or
+  // "behavioral-prompt".
+  string name = 1;
+
+  // Semantic version or monotonic revision of the artefact.
+  string version = 2;
+
+  // Optional content digest of the artefact, formatted as "<alg>:<hex>", for
+  // example "sha256:9f86d0...". Required for model weights and prompts.
+  string digest = 3;
+}

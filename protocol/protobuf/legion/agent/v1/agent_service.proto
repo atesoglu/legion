@@ -1,0 +1,50 @@
+// The contract every agent implements.
+//
+// One shape for deterministic Rust agents and for the model-backed behavioural
+// agent. The orchestrator therefore treats them identically and no agent has a
+// privileged path into the decision.
+syntax = "proto3";
+
+package legion.agent.v1;
+
+import "google/protobuf/duration.proto";
+import "legion/common/v1/failure.proto";
+import "legion/risk/v1/feature.proto";
+import "legion/risk/v1/signal.proto";
+import "legion/risk/v1/transaction.proto";
+
+// EvaluateRequest asks one agent for one signal.
+message EvaluateRequest {
+  // Correlates this invocation with the parent evaluation. Also the scope of
+  // any capability the agent exercises.
+  string evaluation_id = 1;
+
+  legion.risk.v1.Transaction subject = 2;
+
+  // Features the orchestrator already fetched. Deterministic agents are
+  // served push-style so they need no capability round trips on the hot path.
+  // May be empty for agents that pull through the capability runtime.
+  legion.risk.v1.FeatureSet features = 3;
+
+  // Remaining share of the end-to-end request budget allocated to this agent.
+  // Advisory: the transport deadline is authoritative. An agent that cannot
+  // finish within this budget should return a partial or degraded signal
+  // rather than exceed it.
+  google.protobuf.Duration budget = 4;
+}
+
+// EvaluateResponse returns a signal or an explicit failure. An agent must not
+// signal failure by returning a zero-scored signal.
+message EvaluateResponse {
+  oneof result {
+    legion.risk.v1.RiskSignal signal = 1;
+    legion.common.v1.Failure failure = 2;
+  }
+}
+
+// AgentService is implemented by every risk agent.
+service AgentService {
+  // Evaluate produces at most one signal for one risk subject. It must be
+  // side-effect free with respect to the decision: retrying it is safe.
+  rpc Evaluate(EvaluateRequest) returns (EvaluateResponse);
+}

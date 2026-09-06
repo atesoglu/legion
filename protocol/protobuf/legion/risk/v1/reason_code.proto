@@ -1,0 +1,64 @@
+// Machine-readable reasons.
+//
+// Every non-trivial signal and every decision carries reason codes. Reason
+// codes are the primary explanation channel: natural-language text produced by
+// a model is never the authoritative explanation of a financial decision.
+//
+// Reason codes are append-only. Numbers are never reused and semantics are
+// never redefined; a changed meaning requires a new code.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+enum ReasonCode {
+  REASON_CODE_UNSPECIFIED = 0;
+
+  // --- Velocity (100-199) ---------------------------------------------
+  REASON_CODE_VELOCITY_SPIKE = 100;
+  REASON_CODE_AMOUNT_VELOCITY_SPIKE = 101;
+  REASON_CODE_FAILED_ATTEMPT_VELOCITY = 102;
+  REASON_CODE_CARD_TESTING_PATTERN = 103;
+  REASON_CODE_ACCOUNT_ACTIVITY_BURST = 104;
+  REASON_CODE_LOW_AND_SLOW_PATTERN = 105;
+
+  // --- Device (200-299) -----------------------------------------------
+  REASON_CODE_NEW_DEVICE = 200;
+  REASON_CODE_DEVICE_ACCOUNT_MISMATCH = 201;
+  REASON_CODE_DEVICE_SHARED_ACROSS_ACCOUNTS = 202;
+  REASON_CODE_DEVICE_INTEGRITY_COMPROMISED = 203;
+  REASON_CODE_DEVICE_CHURN = 204;
+
+  // --- Geography (300-399) --------------------------------------------
+  REASON_CODE_IMPOSSIBLE_TRAVEL = 300;
+  REASON_CODE_UNUSUAL_LOCATION = 301;
+  REASON_CODE_LOCATION_ACCOUNT_MISMATCH = 302;
+  REASON_CODE_HIGH_RISK_JURISDICTION = 303;
+  REASON_CODE_LOCATION_PRECISION_INSUFFICIENT = 304;
+
+  // --- Amount and pattern (400-499) -----------------------------------
+  REASON_CODE_AMOUNT_OUTLIER = 400;
+  REASON_CODE_MULTI_ACCOUNT_COORDINATION = 401;
+  REASON_CODE_MERCHANT_CATEGORY_ANOMALY = 402;
+
+  // --- Behavioural, model-derived (500-599) ---------------------------
+  REASON_CODE_BEHAVIORAL_ANOMALY = 500;
+  REASON_CODE_BEHAVIORAL_SEQUENCE_ANOMALY = 501;
+
+  // --- Authentication (600-699) ---------------------------------------
+  REASON_CODE_WEAK_AUTHENTICATION = 600;
+  REASON_CODE_AUTHENTICATION_EXEMPTION_ABUSE = 601;
+
+  // --- Platform and degradation (900-999) -----------------------------
+  // These never come from an agent's risk assessment. They record that the
+  // platform itself was not operating normally when the decision was made.
+  REASON_CODE_MODEL_UNAVAILABLE = 900;
+  REASON_CODE_MODEL_TIMEOUT = 901;
+  REASON_CODE_MODEL_OUTPUT_INVALID = 902;
+  REASON_CODE_FEATURE_STORE_DEGRADED = 903;
+  REASON_CODE_AGENT_UNAVAILABLE = 904;
+  REASON_CODE_AGENT_TIMEOUT = 905;
+  REASON_CODE_CAPABILITY_DENIED = 906;
+  REASON_CODE_FALLBACK_POLICY_USED = 907;
+  REASON_CODE_DEADLINE_BUDGET_EXHAUSTED = 908;
+  REASON_CODE_PROMPT_INJECTION_SUSPECTED = 909;
+}

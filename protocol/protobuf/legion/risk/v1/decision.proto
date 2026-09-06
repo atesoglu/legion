@@ -1,0 +1,96 @@
+// The decision and the policy that produced it.
+//
+// Only the Rust sentinel writes these types. Nothing upstream of the sentinel
+// may construct a Decision; see docs/decision-model.md and ADR-004.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/reason_code.proto";
+
+// Decision is the authoritative outcome of an evaluation.
+enum Decision {
+  DECISION_UNSPECIFIED = 0;
+  DECISION_ALLOW = 1;
+  DECISION_REVIEW = 2;
+  DECISION_DECLINE = 3;
+}
+
+// DegradationState records how complete the evaluation was. It is not a
+// quality score; it is an operational fact that must be visible to the caller.
+enum DegradationState {
+  DEGRADATION_STATE_UNSPECIFIED = 0;
+
+  // All configured agents contributed and all features were fresh.
+  DEGRADATION_STATE_NONE = 1;
+
+  // At least one signal was missing or degraded, but the policy permitted
+  // deciding on the remainder.
+  DEGRADATION_STATE_PARTIAL = 2;
+
+  // Too little evidence for the normal policy; the fallback policy decided.
+  DEGRADATION_STATE_FALLBACK = 3;
+}
+
+// SignalContribution shows exactly how one signal moved the aggregate score.
+// Every included and every excluded signal appears here, so the arithmetic of
+// a decision can be checked by hand.
+message SignalContribution {
+  string agent_id = 1;
+
+  // The agent's normalised score in [0, 100].
+  uint32 score = 2;
+
+  // Configured weight in basis points. Included weights sum to 10000 after
+  // renormalisation when signals are missing.
+  uint32 weight_basis_points = 3;
+
+  // score * weight_basis_points / 10000, rounded half-to-even.
+  uint32 weighted_contribution = 4;
+
+  bool included = 5;
+
+  // Populated only when included is false, for example
+  // REASON_CODE_AGENT_TIMEOUT.
+  ReasonCode exclusion_reason = 6;
+}
+
+// PolicyRef identifies the policy that made the decision.
+message PolicyRef {
+  // Stable policy identifier, for example "payments-default".
+  string policy_id = 1;
+
+  legion.common.v1.Version version = 2;
+
+  // True when the fallback policy was applied instead of the normal one.
+  bool fallback = 3;
+}
+
+// Threshold bounds actually in force for this decision. Recorded rather than
+// assumed, because thresholds are configurable and change over time.
+message PolicyThresholds {
+  // Scores strictly below this become ALLOW.
+  uint32 review_at = 1;
+
+  // Scores at or above this become DECLINE.
+  uint32 decline_at = 2;
+}
+
+// DecisionOutcome is the complete, self-describing result of an evaluation.
+message DecisionOutcome {
+  Decision decision = 1;
+
+  // Weighted aggregate in [0, 100].
+  uint32 aggregate_score = 2;
+
+  repeated SignalContribution contributions = 3;
+
+  // Union of the reason codes of included signals plus any platform codes
+  // describing degradation, ordered by contribution descending.
+  repeated ReasonCode reason_codes = 4;
+
+  DegradationState degradation = 5;
+  PolicyRef policy = 6;
+  PolicyThresholds thresholds = 7;
+}

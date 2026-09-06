@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: protocol/protobuf
+lint:
+  use:
+    - STANDARD
+  except:
+    # Legion services are internal and versioned as a whole; per-package
+    # request/response file splitting is not useful at this size.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+breaking:
+  use:
+    - FILE

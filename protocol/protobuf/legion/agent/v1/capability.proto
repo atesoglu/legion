@@ -1,0 +1,119 @@
+// Agent capability model.
+//
+// Agents are untrusted by default. An agent receives no infrastructure
+// credentials, no service discovery, no filesystem and no egress. Everything
+// an agent may do is expressed here as an explicit, auditable capability, and
+// anything not listed is denied.
+//
+// See docs/capability-model.md and ADR-005.
+syntax = "proto3";
+
+package legion.agent.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/feature.proto";
+
+// Capability is the closed set of operations an agent can request. Adding a
+// member is a security-relevant change and requires review.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+
+  // Read the risk subject of the current evaluation only.
+  CAPABILITY_GET_TRANSACTION = 1;
+
+  // Read features about the account of the current subject.
+  CAPABILITY_GET_ACCOUNT_FEATURES = 2;
+
+  // Read velocity features for the current subject.
+  CAPABILITY_GET_VELOCITY_FEATURES = 3;
+
+  // Read device features for the current subject.
+  CAPABILITY_GET_DEVICE_FEATURES = 4;
+
+  // Read geographic features for the current subject.
+  CAPABILITY_GET_GEO_FEATURES = 5;
+
+  // Return a risk signal for the current evaluation. Without this capability
+  // an agent cannot influence a decision at all.
+  CAPABILITY_SUBMIT_EVALUATION = 6;
+}
+
+// CapabilityConstraint narrows a grant. A capability without constraints is
+// still scoped to the current evaluation, but constraints allow tightening
+// further, which is how least privilege is actually enforced in practice.
+message CapabilityConstraint {
+  // If non-empty, only these feature names may be read.
+  repeated string allowed_feature_names = 1;
+
+  // If non-empty, only these windows may be requested.
+  repeated legion.risk.v1.FeatureWindow allowed_windows = 2;
+
+  // Maximum number of calls to this capability within one evaluation. Zero
+  // means the runtime default, which is never unlimited.
+  uint32 max_invocations = 3;
+}
+
+// CapabilityGrant is one permission held by one agent.
+message CapabilityGrant {
+  Capability capability = 1;
+  CapabilityConstraint constraint = 2;
+}
+
+// AgentIdentity is the authenticated identity of an agent workload.
+message AgentIdentity {
+  // Stable logical agent identifier, for example "behavioral".
+  string agent_id = 1;
+
+  legion.common.v1.Version version = 2;
+
+  // Workload identity asserted by the platform, for example a SPIFFE ID. The
+  // capability runtime binds grants to this value, never to a self-declared
+  // agent_id.
+  string workload_id = 3;
+}
+
+// AgentManifest is the declared, reviewable permission set of an agent. It is
+// configuration, not something an agent can send about itself.
+message AgentManifest {
+  AgentIdentity identity = 1;
+  repeated CapabilityGrant grants = 2;
+
+  // Whether this agent's signal may be consumed by the sentinel at all. Lets
+  // an agent be deployed and observed before it is allowed to matter.
+  bool signal_enabled = 3;
+}
+
+// CapabilityVerdict is the outcome of one authorisation check.
+enum CapabilityVerdict {
+  CAPABILITY_VERDICT_UNSPECIFIED = 0;
+  CAPABILITY_VERDICT_ALLOWED = 1;
+
+  // The agent holds no grant for this capability.
+  CAPABILITY_VERDICT_DENIED_NOT_GRANTED = 2;
+
+  // The agent holds the grant but violated its constraint.
+  CAPABILITY_VERDICT_DENIED_CONSTRAINT = 3;
+
+  // The evaluation the agent referenced is unknown, finished or belongs to
+  // another agent.
+  CAPABILITY_VERDICT_DENIED_SCOPE = 4;
+
+  // The per-evaluation invocation budget was exhausted.
+  CAPABILITY_VERDICT_DENIED_BUDGET = 5;
+}
+
+// CapabilityAudit is one immutable record of a capability invocation. Denials
+// and allowances are both recorded; a denial is a security signal.
+message CapabilityAudit {
+  string evaluation_id = 1;
+  AgentIdentity identity = 2;
+  Capability capability = 3;
+  CapabilityVerdict verdict = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  google.protobuf.Duration elapsed = 6;
+
+  // Operator-facing detail. Never contains feature values or subject data.
+  string detail = 7;
+}

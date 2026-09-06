@@ -1,0 +1,95 @@
+// Feature vocabulary.
+//
+// A feature is a named, windowed, versioned observation about a risk subject.
+// Features are computed from history; the transaction itself is not a feature.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// FeatureWindow is the rolling window a feature is aggregated over. The set is
+// closed so that feature names remain comparable across versions and so that
+// the feature store key space stays bounded.
+enum FeatureWindow {
+  FEATURE_WINDOW_UNSPECIFIED = 0;
+
+  // Point-in-time attribute with no aggregation, such as account age.
+  FEATURE_WINDOW_INSTANT = 1;
+
+  FEATURE_WINDOW_5M = 2;
+  FEATURE_WINDOW_10M = 3;
+  FEATURE_WINDOW_1H = 4;
+  FEATURE_WINDOW_24H = 5;
+  FEATURE_WINDOW_7D = 6;
+  FEATURE_WINDOW_30D = 7;
+  FEATURE_WINDOW_LIFETIME = 8;
+}
+
+// FeatureFreshness tells a consumer how much to trust a value. Agents must
+// branch on this: silently treating a missing feature as zero is how velocity
+// rules stop firing during an outage.
+enum FeatureFreshness {
+  FEATURE_FRESHNESS_UNSPECIFIED = 0;
+
+  // Read from the primary store within its staleness budget.
+  FEATURE_FRESHNESS_FRESH = 1;
+
+  // Served from a local cache beyond the staleness budget but within the
+  // policy-permitted degradation window.
+  FEATURE_FRESHNESS_STALE = 2;
+
+  // The store answered and the feature genuinely has no value, for example a
+  // first-ever transaction on a new account.
+  FEATURE_FRESHNESS_ABSENT = 3;
+
+  // The store could not answer. Distinct from ABSENT: the value is unknown,
+  // not known to be empty.
+  FEATURE_FRESHNESS_UNAVAILABLE = 4;
+}
+
+// FeatureValue is a single typed observation.
+message FeatureValue {
+  oneof kind {
+    // Continuous quantity, for example summed amount in minor units.
+    double number = 1;
+
+    // Discrete count, for example number of transactions in a window.
+    int64 count = 2;
+
+    bool flag = 3;
+
+    // Low-cardinality category. Never free text.
+    string category = 4;
+  }
+}
+
+// Feature is one named observation with its provenance.
+message Feature {
+  // Stable snake_case name, for example "transactions_5m". The name does not
+  // encode the window; the window field does.
+  string name = 1;
+
+  FeatureWindow window = 2;
+  FeatureValue value = 3;
+  FeatureFreshness freshness = 4;
+
+  // When the underlying aggregate was last updated.
+  google.protobuf.Timestamp computed_at = 5;
+
+  // Version of the definition that produced this value. Two values of
+  // "amount_24h" from different definition versions are not comparable.
+  string definition_version = 6;
+}
+
+// FeatureSet is the features supplied for one evaluation.
+message FeatureSet {
+  repeated Feature features = 1;
+
+  // Version of the feature definition catalogue as a whole. Recorded in
+  // decision lineage.
+  string catalogue_version = 2;
+
+  // True when at least one requested feature was UNAVAILABLE or STALE.
+  bool degraded = 3;
+}

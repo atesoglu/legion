@@ -1,0 +1,54 @@
+// The deterministic data plane.
+//
+// Velocity, device, geo and the sentinel are separate contracts and separate
+// processes (ADR-006). The engines may fail and be excluded; the sentinel may
+// not, which is why it does not share a process with them.
+syntax = "proto3";
+
+package legion.dataplane.v1;
+
+import "google/protobuf/duration.proto";
+import "legion/common/v1/failure.proto";
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/decision.proto";
+import "legion/risk/v1/signal.proto";
+import "legion/risk/v1/transaction.proto";
+
+// DecideRequest carries everything the sentinel is allowed to consider. The
+// sentinel has no dependencies of its own: it does not call the feature
+// store, agents or the model. Determinism is a property of this closure.
+message DecideRequest {
+  string evaluation_id = 1;
+
+  legion.risk.v1.Transaction subject = 2;
+
+  // Every agent invocation the orchestrator performed, successful or not.
+  // Failures matter: they decide whether the outcome is PARTIAL or FALLBACK.
+  repeated legion.risk.v1.AgentEvaluation evaluations = 3;
+
+  // Policy to apply. Empty selects the configured default policy.
+  string policy_id = 4;
+
+  // Set when feature retrieval was degraded for this evaluation.
+  bool feature_store_degraded = 5;
+
+  // Remaining budget. The sentinel is CPU-bound and must complete well
+  // inside it; exceeding it is a defect, not a degraded mode.
+  google.protobuf.Duration budget = 6;
+}
+
+message DecideResponse {
+  oneof result {
+    legion.risk.v1.DecisionOutcome outcome = 1;
+    legion.common.v1.Failure failure = 2;
+  }
+
+  // Version of the sentinel that produced the outcome.
+  legion.common.v1.Version sentinel_version = 3;
+}
+
+// SentinelService owns the final decision. No other component may map scores
+// to ALLOW, REVIEW or DECLINE.
+service SentinelService {
+  rpc Decide(DecideRequest) returns (DecideResponse);
+}

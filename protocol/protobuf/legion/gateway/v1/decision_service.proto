@@ -1,0 +1,57 @@
+// The externally reachable contract.
+//
+// This is the only Legion service a caller outside the trust boundary talks
+// to. Everything else is internal and reachable only from the orchestrator or
+// the capability runtime.
+syntax = "proto3";
+
+package legion.gateway.v1;
+
+import "google/protobuf/duration.proto";
+import "legion/risk/v1/decision.proto";
+import "legion/risk/v1/lineage.proto";
+import "legion/risk/v1/transaction.proto";
+
+// EvaluationOptions are per-request switches. They can weaken observability or
+// select a policy; they can never weaken authorisation or change decision
+// authority.
+message EvaluationOptions {
+  // Evaluate without the result being authoritative for the caller. Shadow
+  // requests are fully processed and fully recorded; see ADR-012.
+  bool shadow = 1;
+
+  // Policy to apply. Empty selects the configured default.
+  string policy_id = 2;
+
+  // Return the full lineage inline. Off by default: lineage is normally
+  // consumed from the lineage stream, not from the hot path response.
+  bool include_lineage = 3;
+
+  // Caller-declared processing budget. The gateway enforces
+  // min(server_deadline, this) and never grants more than the configured
+  // maximum; see docs/deadline-model.md.
+  google.protobuf.Duration deadline = 4;
+}
+
+message EvaluateTransactionRequest {
+  legion.risk.v1.Transaction transaction = 1;
+  EvaluationOptions options = 2;
+}
+
+message EvaluateTransactionResponse {
+  // Server-assigned identifier, also the correlation key for lineage.
+  string decision_id = 1;
+
+  legion.risk.v1.DecisionOutcome outcome = 2;
+
+  // Populated only when options.include_lineage was set.
+  legion.risk.v1.DecisionLineage lineage = 3;
+}
+
+// DecisionService is the synchronous risk decision path.
+service DecisionService {
+  // EvaluateTransaction returns a decision within the request deadline, or an
+  // error. It never returns late: a caller that has stopped waiting must not
+  // receive a decision that could still be acted upon.
+  rpc EvaluateTransaction(EvaluateTransactionRequest) returns (EvaluateTransactionResponse);
+}

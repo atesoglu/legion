@@ -1,0 +1,66 @@
+// Legion failure vocabulary.
+//
+// Legion distinguishes "the request was answered" from "a dependency did not
+// answer". Both outcomes are first class: a degraded evaluation still produces
+// a decision, and the reason it was degraded travels with that decision.
+syntax = "proto3";
+
+package legion.common.v1;
+
+import "google/protobuf/duration.proto";
+
+// FailureKind is a closed, machine-readable classification of why a component
+// did not deliver its normal result. It is deliberately small: operators alert
+// on these values, so the cardinality must stay stable.
+enum FailureKind {
+  FAILURE_KIND_UNSPECIFIED = 0;
+
+  // The caller's deadline expired before the component produced a result.
+  FAILURE_KIND_DEADLINE_EXCEEDED = 1;
+
+  // The circuit breaker for this dependency is open; no call was attempted.
+  FAILURE_KIND_CIRCUIT_OPEN = 2;
+
+  // The dependency was reachable but returned an error.
+  FAILURE_KIND_DEPENDENCY_ERROR = 3;
+
+  // The dependency was not reachable at all.
+  FAILURE_KIND_DEPENDENCY_UNAVAILABLE = 4;
+
+  // A response was received but failed schema or range validation. Applies in
+  // particular to structured model output.
+  FAILURE_KIND_INVALID_RESPONSE = 5;
+
+  // The request itself was rejected as malformed or semantically invalid.
+  FAILURE_KIND_INVALID_REQUEST = 6;
+
+  // A capability required to serve the request was not granted to the caller.
+  FAILURE_KIND_CAPABILITY_DENIED = 7;
+
+  // The component shed load deliberately (queue full, concurrency limit).
+  FAILURE_KIND_OVERLOADED = 8;
+
+  // An unexpected internal error. Should be rare and always alertable.
+  FAILURE_KIND_INTERNAL = 9;
+}
+
+// Failure describes a single dependency failure in a form that is safe to log,
+// aggregate and assert on in tests.
+message Failure {
+  FailureKind kind = 1;
+
+  // Logical component that failed, for example "feature-store" or
+  // "inference-runtime". Must be a bounded set of known component names.
+  string component = 2;
+
+  // Short operator-facing description. Must never contain cardholder data,
+  // raw identifiers, merchant names or model free text.
+  string message = 3;
+
+  // Wall-clock time spent on this dependency before the failure was observed.
+  google.protobuf.Duration elapsed = 4;
+
+  // Whether the same call could plausibly succeed on retry within the current
+  // request deadline. Informational: retry policy lives in the caller.
+  bool retryable = 5;
+}

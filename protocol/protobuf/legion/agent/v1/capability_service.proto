@@ -1,0 +1,113 @@
+// The only interface an agent has to the rest of the platform.
+//
+// This service is the capability runtime. It is the sole reason an agent needs
+// neither feature-store credentials nor network egress: every permitted action
+// is a method here, scoped to one evaluation and checked against the agent's
+// manifest before it executes.
+//
+// See docs/capability-model.md.
+syntax = "proto3";
+
+package legion.agent.v1;
+
+import "legion/agent/v1/capability.proto";
+import "legion/risk/v1/feature.proto";
+import "legion/risk/v1/signal.proto";
+import "legion/risk/v1/transaction.proto";
+
+// CapabilityDenied is returned instead of a payload whenever authorisation
+// fails. Agents receive the verdict but no information about what they were
+// denied access to.
+message CapabilityDenied {
+  Capability capability = 1;
+  CapabilityVerdict verdict = 2;
+}
+
+message GetTransactionRequest {
+  string evaluation_id = 1;
+}
+
+message GetTransactionResponse {
+  oneof result {
+    legion.risk.v1.Transaction transaction = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+// FeatureQuery is the only way an agent may express a feature read. It cannot
+// express a key, a connection, a scan or a subject other than the current one.
+message FeatureQuery {
+  repeated string names = 1;
+  repeated legion.risk.v1.FeatureWindow windows = 2;
+}
+
+message GetAccountFeaturesRequest {
+  string evaluation_id = 1;
+  FeatureQuery query = 2;
+}
+
+message GetAccountFeaturesResponse {
+  oneof result {
+    legion.risk.v1.FeatureSet features = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+message GetVelocityFeaturesRequest {
+  string evaluation_id = 1;
+  FeatureQuery query = 2;
+}
+
+message GetVelocityFeaturesResponse {
+  oneof result {
+    legion.risk.v1.FeatureSet features = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+message GetDeviceFeaturesRequest {
+  string evaluation_id = 1;
+  FeatureQuery query = 2;
+}
+
+message GetDeviceFeaturesResponse {
+  oneof result {
+    legion.risk.v1.FeatureSet features = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+message GetGeoFeaturesRequest {
+  string evaluation_id = 1;
+  FeatureQuery query = 2;
+}
+
+message GetGeoFeaturesResponse {
+  oneof result {
+    legion.risk.v1.FeatureSet features = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+message SubmitEvaluationRequest {
+  string evaluation_id = 1;
+  legion.risk.v1.RiskSignal signal = 2;
+}
+
+message SubmitEvaluationResponse {
+  oneof result {
+    // Empty acknowledgement; the signal was accepted for aggregation.
+    bool accepted = 1;
+    CapabilityDenied denied = 2;
+  }
+}
+
+// CapabilityService is exposed to agents and to nothing else.
+service CapabilityService {
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse);
+  rpc GetAccountFeatures(GetAccountFeaturesRequest) returns (GetAccountFeaturesResponse);
+  rpc GetVelocityFeatures(GetVelocityFeaturesRequest) returns (GetVelocityFeaturesResponse);
+  rpc GetDeviceFeatures(GetDeviceFeaturesRequest) returns (GetDeviceFeaturesResponse);
+  rpc GetGeoFeatures(GetGeoFeaturesRequest) returns (GetGeoFeaturesResponse);
+  rpc SubmitEvaluation(SubmitEvaluationRequest) returns (SubmitEvaluationResponse);
+}

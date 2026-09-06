@@ -1,0 +1,72 @@
+// Risk signals produced by agents.
+//
+// A signal is a bounded opinion. It is not a decision, and no agent — least of
+// all the model-backed one — can express a decision through this type.
+syntax = "proto3";
+
+package legion.risk.v1;
+
+import "google/protobuf/duration.proto";
+import "legion/common/v1/failure.proto";
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/feature.proto";
+import "legion/risk/v1/reason_code.proto";
+
+// EvidenceItem is a single input the agent actually used, exposed so that a
+// signal can be re-derived and argued with after the fact.
+message EvidenceItem {
+  // Feature name or well-known evidence key, for example
+  // "unique_devices_24h".
+  string key = 1;
+
+  FeatureValue value = 2;
+
+  // Optional threshold the value was compared against, for deterministic
+  // agents. Absent for model-derived evidence.
+  FeatureValue threshold = 3;
+}
+
+// RiskSignal is the single output type of every agent.
+//
+// Scores are integers on a closed 0-100 scale. Integers, not floats, because
+// aggregation must be reproducible across languages and across replays.
+message RiskSignal {
+  // Stable agent identifier, for example "velocity", "device", "geo",
+  // "behavioral".
+  string agent_id = 1;
+
+  legion.common.v1.Version agent_version = 2;
+
+  // Normalised risk contribution in [0, 100]. 0 means "no elevated risk
+  // observed", not "no opinion"; absence of opinion is expressed by omitting
+  // the signal and reporting a Failure instead.
+  uint32 score = 3;
+
+  // Self-reported confidence in [0, 100]. Policy may down-weight or exclude
+  // low-confidence signals. Confidence never raises a score.
+  uint32 confidence = 4;
+
+  repeated ReasonCode reason_codes = 5;
+  repeated EvidenceItem evidence = 6;
+
+  // Time the agent spent producing this signal, measured by the agent.
+  google.protobuf.Duration compute_time = 7;
+
+  // Set when the agent produced a signal despite missing or stale inputs.
+  bool degraded = 8;
+}
+
+// AgentEvaluation is the result envelope of invoking one agent: either a
+// signal, or an explanation of why there is none.
+message AgentEvaluation {
+  string agent_id = 1;
+
+  oneof result {
+    RiskSignal signal = 2;
+    legion.common.v1.Failure failure = 3;
+  }
+
+  // Wall-clock time the orchestrator observed for this agent, including
+  // transport. Always greater than or equal to signal.compute_time.
+  google.protobuf.Duration observed_latency = 4;
+}
