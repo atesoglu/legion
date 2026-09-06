@@ -76,6 +76,12 @@ const (
 	ReasonCode_REASON_CODE_FALLBACK_POLICY_USED       ReasonCode = 907
 	ReasonCode_REASON_CODE_DEADLINE_BUDGET_EXHAUSTED  ReasonCode = 908
 	ReasonCode_REASON_CODE_PROMPT_INJECTION_SUSPECTED ReasonCode = 909
+	// Exclusions that are configuration rather than failure. A signal can be
+	// absent from an aggregate without anything having gone wrong, and lineage
+	// must be able to say which of the two happened.
+	ReasonCode_REASON_CODE_SIGNAL_DISABLED          ReasonCode = 910
+	ReasonCode_REASON_CODE_CONFIDENCE_BELOW_MINIMUM ReasonCode = 911
+	ReasonCode_REASON_CODE_AGENT_NOT_CONFIGURED     ReasonCode = 912
 )
 
 // Enum value maps for ReasonCode.
@@ -115,6 +121,9 @@ var (
 		907: "REASON_CODE_FALLBACK_POLICY_USED",
 		908: "REASON_CODE_DEADLINE_BUDGET_EXHAUSTED",
 		909: "REASON_CODE_PROMPT_INJECTION_SUSPECTED",
+		910: "REASON_CODE_SIGNAL_DISABLED",
+		911: "REASON_CODE_CONFIDENCE_BELOW_MINIMUM",
+		912: "REASON_CODE_AGENT_NOT_CONFIGURED",
 	}
 	ReasonCode_value = map[string]int32{
 		"REASON_CODE_UNSPECIFIED":                     0,
@@ -151,6 +160,9 @@ var (
 		"REASON_CODE_FALLBACK_POLICY_USED":            907,
 		"REASON_CODE_DEADLINE_BUDGET_EXHAUSTED":       908,
 		"REASON_CODE_PROMPT_INJECTION_SUSPECTED":      909,
+		"REASON_CODE_SIGNAL_DISABLED":                 910,
+		"REASON_CODE_CONFIDENCE_BELOW_MINIMUM":        911,
+		"REASON_CODE_AGENT_NOT_CONFIGURED":            912,
 	}
 )
 
@@ -185,8 +197,7 @@ var File_legion_risk_v1_reason_code_proto protoreflect.FileDescriptor
 
 const file_legion_risk_v1_reason_code_proto_rawDesc = "" +
 	"\n" +
-	" legion/risk/v1/reason_code.proto\x12\x0elegion.risk.v1*\xc0\n" +
-	"\n" +
+	" legion/risk/v1/reason_code.proto\x12\x0elegion.risk.v1*\xb4\v\n" +
 	"\n" +
 	"ReasonCode\x12\x1b\n" +
 	"\x17REASON_CODE_UNSPECIFIED\x10\x00\x12\x1e\n" +
@@ -222,7 +233,10 @@ const file_legion_risk_v1_reason_code_proto_rawDesc = "" +
 	"\x1dREASON_CODE_CAPABILITY_DENIED\x10\x8a\a\x12%\n" +
 	" REASON_CODE_FALLBACK_POLICY_USED\x10\x8b\a\x12*\n" +
 	"%REASON_CODE_DEADLINE_BUDGET_EXHAUSTED\x10\x8c\a\x12+\n" +
-	"&REASON_CODE_PROMPT_INJECTION_SUSPECTED\x10\x8d\aB\xc1\x01\n" +
+	"&REASON_CODE_PROMPT_INJECTION_SUSPECTED\x10\x8d\a\x12 \n" +
+	"\x1bREASON_CODE_SIGNAL_DISABLED\x10\x8e\a\x12)\n" +
+	"$REASON_CODE_CONFIDENCE_BELOW_MINIMUM\x10\x8f\a\x12%\n" +
+	" REASON_CODE_AGENT_NOT_CONFIGURED\x10\x90\aB\xc1\x01\n" +
 	"\x12com.legion.risk.v1B\x0fReasonCodeProtoP\x01Z@github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1;riskv1\xa2\x02\x03LRX\xaa\x02\x0eLegion.Risk.V1\xca\x02\x0eLegion\\Risk\\V1\xe2\x02\x1aLegion\\Risk\\V1\\GPBMetadata\xea\x02\x10Legion::Risk::V1b\x06proto3"
 
 var (

@@ -61,4 +61,11 @@ enum ReasonCode {
   REASON_CODE_FALLBACK_POLICY_USED = 907;
   REASON_CODE_DEADLINE_BUDGET_EXHAUSTED = 908;
   REASON_CODE_PROMPT_INJECTION_SUSPECTED = 909;
+
+  // Exclusions that are configuration rather than failure. A signal can be
+  // absent from an aggregate without anything having gone wrong, and lineage
+  // must be able to say which of the two happened.
+  REASON_CODE_SIGNAL_DISABLED = 910;
+  REASON_CODE_CONFIDENCE_BELOW_MINIMUM = 911;
+  REASON_CODE_AGENT_NOT_CONFIGURED = 912;
 }
