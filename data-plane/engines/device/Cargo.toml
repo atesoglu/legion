@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 legion-common.workspace = true
+legion-engine.workspace = true
 legion-proto.workspace = true
 legion-platform.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

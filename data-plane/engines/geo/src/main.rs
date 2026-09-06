@@ -8,27 +8,31 @@
 //! `Unimplemented`, and shuts down cleanly. Behaviour arrives in Phase 1.
 
 use std::error::Error;
+use std::time::Instant;
 
+use legion_geo::{AGENT_ID, Thresholds, evaluate};
 use legion_platform::{ServiceConfig, init_tracing, shutdown_signal};
 use legion_proto::legion::agent::v1::agent_service_server::{AgentService, AgentServiceServer};
 use legion_proto::legion::agent::v1::{EvaluateRequest, EvaluateResponse};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status};
 
-const SERVICE_NAME: &str = "geo";
+const SERVICE_NAME: &str = AGENT_ID;
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:9500";
 
-struct GeoEngine;
+struct GeoEngine {
+    thresholds: Thresholds,
+}
 
 #[tonic::async_trait]
 impl AgentService for GeoEngine {
     async fn evaluate(
         &self,
-        _request: Request<EvaluateRequest>,
+        request: Request<EvaluateRequest>,
     ) -> Result<Response<EvaluateResponse>, Status> {
-        Err(Status::unimplemented(
-            "geo engine: signal computation arrives in Phase 1",
-        ))
+        let started = Instant::now();
+        let evaluated = evaluate(&request.into_inner(), &self.thresholds, started.elapsed());
+        Ok(Response::new(evaluated))
     }
 }
 
@@ -45,7 +49,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     Server::builder()
-        .add_service(AgentServiceServer::new(GeoEngine))
+        .add_service(AgentServiceServer::new(GeoEngine {
+            thresholds: Thresholds::default(),
+        }))
         .serve_with_shutdown(address, shutdown_signal())
         .await?;
 

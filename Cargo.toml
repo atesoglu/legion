@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/common",
+    "crates/engine",
     "crates/platform",
     "crates/proto",
     "data-plane/sentinel",
@@ -19,6 +20,7 @@ repository = "https://github.com/atesoglu/legion"
 
 [workspace.dependencies]
 legion-common = { path = "crates/common" }
+legion-engine = { path = "crates/engine" }
 legion-platform = { path = "crates/platform" }
 legion-proto = { path = "crates/proto" }
 

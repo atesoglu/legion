@@ -383,6 +383,7 @@ name = "legion-device"
 version = "0.1.0"
 dependencies = [
  "legion-common",
+ "legion-engine",
  "legion-platform",
  "legion-proto",
  "tokio",
@@ -391,10 +392,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "legion-engine"
+version = "0.1.0"
+dependencies = [
+ "legion-common",
+ "legion-proto",
+ "prost-types",
+]
+
+[[package]]
 name = "legion-geo"
 version = "0.1.0"
 dependencies = [
  "legion-common",
+ "legion-engine",
  "legion-platform",
  "legion-proto",
  "tokio",
@@ -443,6 +454,7 @@ name = "legion-velocity"
 version = "0.1.0"
 dependencies = [
  "legion-common",
+ "legion-engine",
  "legion-platform",
  "legion-proto",
  "tokio",
