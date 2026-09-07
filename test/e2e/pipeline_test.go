@@ -3,17 +3,27 @@
 package e2e
 
 import (
+	"context"
+	"strings"
 	"testing"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
+	commonv1 "github.com/atesoglu/legion/protocol/gen/go/legion/common/v1"
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
 	gatewayv1 "github.com/atesoglu/legion/protocol/gen/go/legion/gateway/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
-// startPipeline brings up the feature store, the sentinel, the three engines
-// and the orchestrator, wired to each other exactly as they are in a
-// deployment.
+// apiKey is the credential the harness configures the gateway with.
+const apiKey = "e2e-caller-key-that-is-long-enough-to-pass"
+
+// startPipeline brings up the feature store, the sentinel, the three engines,
+// the orchestrator and the gateway, wired to each other exactly as they are in
+// a deployment.
 func startPipeline(t *testing.T, history []storedFeature) *harness {
 	t.Helper()
 
@@ -24,26 +34,42 @@ func startPipeline(t *testing.T, history []storedFeature) *harness {
 	device := h.startRust("legion-device", "device")
 	geo := h.startRust("legion-geo", "geo")
 
-	h.startGo("control-plane/orchestrator", "orchestrator", []string{
+	orchestrator := h.startGo("control-plane/orchestrator", "orchestrator", []string{
 		"LEGION_AGENT_ENDPOINTS=velocity=" + velocity + ",device=" + device + ",geo=" + geo,
 		"LEGION_SENTINEL_ENDPOINT=" + sentinel,
 		"LEGION_FEATURE_STORE=" + store,
+	})
+
+	h.startGo("gateway", "gateway", []string{
+		"LEGION_ORCHESTRATOR_ENDPOINT=" + orchestrator,
+		"LEGION_API_KEYS=e2e-caller=" + apiKey,
 	})
 
 	h.waitReady()
 	return h
 }
 
+// authenticated returns a context carrying the harness's caller credential.
+func authenticated(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := callContext(t)
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+apiKey), cancel
+}
+
+func gatewayClient(t *testing.T, h *harness) gatewayv1.DecisionServiceClient {
+	t.Helper()
+	return gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["gateway"]))
+}
+
+// decide sends one transaction through the entire platform, edge first.
 func decide(t *testing.T, h *harness, subject *riskv1.Transaction) *gatewayv1.EvaluateTransactionResponse {
 	t.Helper()
 
-	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
-	ctx, cancel := callContext(t)
+	ctx, cancel := authenticated(t)
 	defer cancel()
 
-	response, err := client.EvaluateTransaction(ctx, &gatewayv1.EvaluateTransactionRequest{
-		Transaction: subject,
-	})
+	response, err := gatewayClient(t, h).EvaluateTransaction(ctx,
+		&gatewayv1.EvaluateTransactionRequest{Transaction: subject})
 	if err != nil {
 		t.Fatalf("EvaluateTransaction: %v", err)
 	}
@@ -156,13 +182,71 @@ func TestAnEmptyStoreIsAbsenceNotIgnorance(t *testing.T) {
 // rather than the pipeline: a malformed subject must not start an evaluation.
 func TestAnInvalidRequestIsRejectedBeforeAnyAgentIsConsulted(t *testing.T) {
 	h := startPipeline(t, settledHistory())
-	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
+
+	ctx, cancel := authenticated(t)
+	defer cancel()
+
+	_, err := gatewayClient(t, h).EvaluateTransaction(ctx,
+		&gatewayv1.EvaluateTransactionRequest{})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("error = %v, want InvalidArgument", err)
+	}
+}
+
+// TestAnUnauthenticatedCallerReachesNothing is the edge's first job: Zone 0
+// must prove who it is before consuming any platform resource.
+func TestAnUnauthenticatedCallerReachesNothing(t *testing.T) {
+	h := startPipeline(t, settledHistory())
 
 	ctx, cancel := callContext(t)
 	defer cancel()
 
-	if _, err := client.EvaluateTransaction(ctx, &gatewayv1.EvaluateTransactionRequest{}); err == nil {
-		t.Fatal("a request with no transaction was accepted")
+	_, err := gatewayClient(t, h).EvaluateTransaction(ctx,
+		&gatewayv1.EvaluateTransactionRequest{Transaction: transaction()})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("error = %v, want Unauthenticated", err)
+	}
+}
+
+func TestAWrongCredentialIsRefused(t *testing.T) {
+	h := startPipeline(t, settledHistory())
+
+	base, cancel := callContext(t)
+	defer cancel()
+	ctx := metadata.AppendToOutgoingContext(base,
+		"authorization", "Bearer not-the-configured-key-but-long-enough")
+
+	_, err := gatewayClient(t, h).EvaluateTransaction(ctx,
+		&gatewayv1.EvaluateTransactionRequest{Transaction: transaction()})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("error = %v, want Unauthenticated", err)
+	}
+}
+
+// TestAnUnpseudonymisedIdentifierIsRefusedAtTheEdge is the control that keeps
+// cardholder data out of the platform entirely.
+func TestAnUnpseudonymisedIdentifierIsRefusedAtTheEdge(t *testing.T) {
+	h := startPipeline(t, settledHistory())
+
+	subject := transaction()
+	subject.Instrument = &riskv1.Instrument{
+		Id: &commonv1.PseudonymousId{
+			Value:      "4111111111111111",
+			KeyVersion: "v1",
+			Domain:     commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_INSTRUMENT,
+		},
+	}
+
+	ctx, cancel := authenticated(t)
+	defer cancel()
+
+	_, err := gatewayClient(t, h).EvaluateTransaction(ctx,
+		&gatewayv1.EvaluateTransactionRequest{Transaction: subject})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("error = %v, want InvalidArgument", err)
+	}
+	if strings.Contains(err.Error(), "4111111111111111") {
+		t.Fatal("the rejection echoed the value that must not enter the platform")
 	}
 }
 

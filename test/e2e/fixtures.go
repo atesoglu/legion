@@ -18,6 +18,16 @@ import (
 // something well-formed to carry. The scenario DSL and labelled datasets are
 // Phase 5 work.
 
+// Identifiers are shaped as the gateway requires: the hex encoding of an
+// HMAC-SHA-256, carrying a key version and a domain. A caller that has not
+// pseudonymised is refused at the edge, so fixtures cannot be readable strings.
+const (
+	fixtureAccount  = "1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff001"
+	fixtureDevice   = "2f3e4d5c6b7a8990a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718"
+	fixtureTxn      = "3a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f6071829"
+	fixtureMerchant = "4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f607182930"
+)
+
 func pseudonym(value string, domain commonv1.IdentifierDomain) *commonv1.PseudonymousId {
 	return &commonv1.PseudonymousId{
 		Value:      value,
@@ -27,20 +37,25 @@ func pseudonym(value string, domain commonv1.IdentifierDomain) *commonv1.Pseudon
 }
 
 // transaction builds an ordinary, well-formed subject.
+//
+// The occurrence time is now rather than a fixed instant: the gateway refuses
+// transactions older than a day, because velocity windows are computed against
+// this timestamp and a stale one produces a meaningless evaluation.
 func transaction() *riskv1.Transaction {
 	return &riskv1.Transaction{
-		Id:         pseudonym("txn-0000000000000001", commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_UNSPECIFIED),
-		OccurredAt: timestamppb.New(time.Unix(1_700_000_000, 0)),
+		Id:         pseudonym(fixtureTxn, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_TRANSACTION),
+		OccurredAt: timestamppb.New(time.Now()),
 		Type:       riskv1.TransactionType_TRANSACTION_TYPE_PURCHASE,
 		Channel:    riskv1.Channel_CHANNEL_ECOMMERCE,
 		Amount:     &commonv1.Money{CurrencyCode: "EUR", MinorUnits: 4_250},
 		Account: &riskv1.Account{
-			Id:              pseudonym("acct-01", commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_UNSPECIFIED),
+			Id:              pseudonym(fixtureAccount, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_ACCOUNT),
+			OpenedAt:        timestamppb.New(time.Now().Add(-90 * 24 * time.Hour)),
 			HomeCountryCode: "DE",
 			Segment:         "retail",
 		},
 		Device: &riskv1.Device{
-			Id:         pseudonym("dev-01", commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_UNSPECIFIED),
+			Id:         pseudonym(fixtureDevice, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_DEVICE),
 			FormFactor: riskv1.DeviceFormFactor_DEVICE_FORM_FACTOR_MOBILE,
 			OsFamily:   "android",
 		},
@@ -50,7 +65,7 @@ func transaction() *riskv1.Transaction {
 			Source:               riskv1.LocationSource_LOCATION_SOURCE_IP_GEOLOCATION,
 		},
 		Merchant: &riskv1.Merchant{
-			Id:           pseudonym("mer-01", commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_UNSPECIFIED),
+			Id:           pseudonym(fixtureMerchant, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_MERCHANT),
 			CategoryCode: "5411",
 			CountryCode:  "DE",
 		},
@@ -97,11 +112,6 @@ func (s storedFeature) key() string {
 func (s storedFeature) encoded(computedAt time.Time) string {
 	return fmt.Sprintf("%d|%d|v1", s.value, computedAt.Unix())
 }
-
-const (
-	fixtureAccount = "acct-01"
-	fixtureDevice  = "dev-01"
-)
 
 // cardTestingHistory is the account history that makes the velocity engine
 // report card testing: many authorisations in five minutes, all of them small.
