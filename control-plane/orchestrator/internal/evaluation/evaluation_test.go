@@ -12,6 +12,7 @@ import (
 
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/breaker"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
+	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/registry"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	commonv1 "github.com/atesoglu/legion/protocol/gen/go/legion/common/v1"
@@ -20,14 +21,16 @@ import (
 )
 
 type fakeAgent struct {
-	score int32
-	err   error
-	delay time.Duration
-	calls atomic.Int32
+	score        int32
+	err          error
+	delay        time.Duration
+	calls        atomic.Int32
+	lastFeatures atomic.Int32
 }
 
-func (f *fakeAgent) Evaluate(ctx context.Context, _ *agentv1.EvaluateRequest) (*agentv1.EvaluateResponse, error) {
+func (f *fakeAgent) Evaluate(ctx context.Context, in *agentv1.EvaluateRequest) (*agentv1.EvaluateResponse, error) {
 	f.calls.Add(1)
+	f.lastFeatures.Store(int32(len(in.GetFeatures().GetFeatures())))
 	if f.delay > 0 {
 		select {
 		case <-time.After(f.delay):
@@ -64,6 +67,40 @@ func (f *fakeSentinel) Decide(_ context.Context, in *dataplanev1.DecideRequest) 
 	}, nil
 }
 
+type fakeStore struct {
+	features []*riskv1.Feature
+	err      error
+	calls    atomic.Int32
+}
+
+func (f *fakeStore) Fetch(_ context.Context, requests []features.Request) ([]*riskv1.Feature, error) {
+	f.calls.Add(1)
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.features != nil {
+		return f.features, nil
+	}
+	// Default: every requested feature is present and fresh.
+	out := make([]*riskv1.Feature, 0, len(requests))
+	for _, request := range requests {
+		out = append(out, &riskv1.Feature{
+			Name:      request.Name,
+			Window:    request.Window,
+			Value:     &riskv1.FeatureValue{Kind: &riskv1.FeatureValue_Count{Count: 1}},
+			Freshness: riskv1.FeatureFreshness_FEATURE_FRESHNESS_FRESH,
+		})
+	}
+	return out, nil
+}
+
+func subject() *riskv1.Transaction {
+	return &riskv1.Transaction{
+		Account: &riskv1.Account{Id: &commonv1.PseudonymousId{Value: "acct-1"}},
+		Device:  &riskv1.Device{Id: &commonv1.PseudonymousId{Value: "dev-1"}},
+	}
+}
+
 func agents() *registry.Registry {
 	r, err := registry.New([]registry.Agent{
 		{ID: "velocity", Endpoint: "v:1"},
@@ -78,10 +115,21 @@ func agents() *registry.Registry {
 
 func coordinator(t *testing.T, clients map[string]AgentClient, sentinel SentinelClient) *Coordinator {
 	t.Helper()
+	return coordinatorWithStore(t, clients, sentinel, &fakeStore{})
+}
+
+func coordinatorWithStore(
+	t *testing.T,
+	clients map[string]AgentClient,
+	sentinel SentinelClient,
+	store features.Store,
+) *Coordinator {
+	t.Helper()
 	c, err := New(Options{
 		Registry:        agents(),
 		Clients:         clients,
 		Sentinel:        sentinel,
+		Store:           store,
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker:         breaker.Default(),
 	})
@@ -104,9 +152,21 @@ func TestNewRefusesARegisteredAgentWithNoClient(t *testing.T) {
 		Registry: agents(),
 		Clients:  map[string]AgentClient{"velocity": &fakeAgent{}},
 		Sentinel: &fakeSentinel{},
+		Store:    &fakeStore{},
 	})
 	if err == nil {
 		t.Fatal("New accepted a registry it could not serve")
+	}
+}
+
+func TestNewRefusesToRunWithoutAFeatureStore(t *testing.T) {
+	_, err := New(Options{
+		Registry: agents(),
+		Clients:  healthy(),
+		Sentinel: &fakeSentinel{},
+	})
+	if err == nil {
+		t.Fatal("New accepted a coordinator with no feature store")
 	}
 }
 
@@ -200,6 +260,7 @@ func TestAnOpenBreakerSkipsTheCallEntirely(t *testing.T) {
 		Registry:        agents(),
 		Clients:         clients,
 		Sentinel:        &fakeSentinel{},
+		Store:           &fakeStore{},
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker: breaker.Config{
 			MinimumRequests: 2,
@@ -269,15 +330,73 @@ func TestAnUnavailableSentinelIsAnErrorNotAnAllow(t *testing.T) {
 	}
 }
 
-func TestMissingFeaturesAreDeclaredToTheSentinel(t *testing.T) {
-	sentinel := &fakeSentinel{}
-	c := coordinator(t, healthy(), sentinel)
+func TestFeaturesReachTheAgentsThatNeedThem(t *testing.T) {
+	clients := healthy()
+	store := &fakeStore{}
+	c := coordinatorWithStore(t, clients, &fakeSentinel{}, store)
 
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if store.calls.Load() != 1 {
+		t.Fatalf("store fetched %d times, want 1", store.calls.Load())
+	}
+	for id, client := range clients {
+		if got := client.(*fakeAgent).lastFeatures.Load(); got == 0 {
+			t.Fatalf("agent %s received no features", id)
+		}
+	}
+}
+
+func TestFreshEvidenceIsNotReportedAsDegraded(t *testing.T) {
+	sentinel := &fakeSentinel{}
+	c := coordinatorWithStore(t, healthy(), sentinel, &fakeStore{})
+
+	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if sentinel.degrade {
+		t.Fatal("a fully fresh feature set was reported as degraded")
+	}
+}
+
+func TestAStoreOutageDegradesTheDecisionRatherThanFailingIt(t *testing.T) {
+	clients := healthy()
+	sentinel := &fakeSentinel{}
+	c := coordinatorWithStore(t, clients, sentinel, &fakeStore{err: errors.New("store down")})
+
+	outcome, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if outcome == nil {
+		t.Fatal("a store outage produced no decision")
+	}
+	if !sentinel.degrade {
+		t.Error("the sentinel was not told the feature store was unavailable")
+	}
+	// Agents must still be consulted: some can assess the subject alone.
+	for id, client := range clients {
+		if client.(*fakeAgent).calls.Load() != 1 {
+			t.Errorf("agent %s was not consulted during a store outage", id)
+		}
+	}
+}
+
+func TestStaleEvidenceIsReportedAsDegraded(t *testing.T) {
+	sentinel := &fakeSentinel{}
+	store := &fakeStore{features: []*riskv1.Feature{{
+		Name:      "transactions",
+		Freshness: riskv1.FeatureFreshness_FEATURE_FRESHNESS_STALE,
+	}}}
+	c := coordinatorWithStore(t, healthy(), sentinel, store)
+
+	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if !sentinel.degrade {
-		t.Fatal("the sentinel was not told the feature store was unavailable")
+		t.Fatal("a stale feature set was not reported as degraded")
 	}
 }
 

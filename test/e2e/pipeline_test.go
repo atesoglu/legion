@@ -11,12 +11,14 @@ import (
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
-// startPipeline brings up the sentinel, the three engines and the orchestrator,
-// wired to each other exactly as they are in a deployment.
-func startPipeline(t *testing.T) *harness {
+// startPipeline brings up the feature store, the sentinel, the three engines
+// and the orchestrator, wired to each other exactly as they are in a
+// deployment.
+func startPipeline(t *testing.T, history []storedFeature) *harness {
 	t.Helper()
 
 	h := newHarness(t)
+	store := h.startFeatureStore(history)
 	sentinel := h.startRust("legion-sentinel", "sentinel")
 	velocity := h.startRust("legion-velocity", "velocity")
 	device := h.startRust("legion-device", "device")
@@ -25,28 +27,35 @@ func startPipeline(t *testing.T) *harness {
 	h.startGo("control-plane/orchestrator", "orchestrator", []string{
 		"LEGION_AGENT_ENDPOINTS=velocity=" + velocity + ",device=" + device + ",geo=" + geo,
 		"LEGION_SENTINEL_ENDPOINT=" + sentinel,
+		"LEGION_FEATURE_STORE=" + store,
 	})
 
 	h.waitReady()
 	return h
 }
 
-// TestATransactionSurvivesTheWholeChain is the test the repository did not
-// have: Go dialling Rust, four services agreeing on one contract, and a
-// decision coming back.
-func TestATransactionSurvivesTheWholeChain(t *testing.T) {
-	h := startPipeline(t)
-	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
+func decide(t *testing.T, h *harness, subject *riskv1.Transaction) *gatewayv1.EvaluateTransactionResponse {
+	t.Helper()
 
+	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
 	ctx, cancel := callContext(t)
 	defer cancel()
 
 	response, err := client.EvaluateTransaction(ctx, &gatewayv1.EvaluateTransactionRequest{
-		Transaction: transaction(),
+		Transaction: subject,
 	})
 	if err != nil {
 		t.Fatalf("EvaluateTransaction: %v", err)
 	}
+	return response
+}
+
+// TestATransactionSurvivesTheWholeChain is the test the repository did not
+// have: Go dialling Rust, five services agreeing on one contract, and a
+// decision coming back.
+func TestATransactionSurvivesTheWholeChain(t *testing.T) {
+	h := startPipeline(t, settledHistory())
+	response := decide(t, h, transaction())
 
 	if response.GetDecisionId() == "" {
 		t.Error("no decision identifier was assigned")
@@ -73,49 +82,80 @@ func TestATransactionSurvivesTheWholeChain(t *testing.T) {
 	}
 }
 
-// TestTheDecisionIsHonestAboutMissingFeatures pins current behaviour: nothing
-// fetches features yet, so no deterministic rule can be evaluated, every agent
-// reports a failure and the fallback policy decides.
-//
-// This assertion is expected to change when the feature store lands. That is
-// the point: it will fail loudly rather than drift.
-func TestTheDecisionIsHonestAboutMissingFeatures(t *testing.T) {
-	h := startPipeline(t)
-	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
+// TestSettledHistoryIsAllowed proves evidence now reaches the engines: an
+// unremarkable account scores low enough to allow, which was impossible while
+// nothing fetched features.
+func TestSettledHistoryIsAllowed(t *testing.T) {
+	h := startPipeline(t, settledHistory())
+	outcome := decide(t, h, transaction()).GetOutcome()
 
-	ctx, cancel := callContext(t)
-	defer cancel()
-
-	response, err := client.EvaluateTransaction(ctx, &gatewayv1.EvaluateTransactionRequest{
-		Transaction: transaction(),
-	})
-	if err != nil {
-		t.Fatalf("EvaluateTransaction: %v", err)
+	if outcome.GetDecision() != riskv1.Decision_DECISION_ALLOW {
+		t.Errorf("decision = %v, want ALLOW (aggregate %d)",
+			outcome.GetDecision(), outcome.GetAggregateScore())
 	}
-	outcome := response.GetOutcome()
-
-	if outcome.GetDegradation() != riskv1.DegradationState_DEGRADATION_STATE_FALLBACK {
-		t.Errorf("degradation = %v, want FALLBACK", outcome.GetDegradation())
+	if outcome.GetPolicy().GetFallback() {
+		t.Error("the fallback policy decided despite sufficient evidence")
 	}
+
+	// The deterministic engines contributed; only the unregistered behavioural
+	// agent is missing, so the evaluation is partial rather than clean.
+	for _, contribution := range outcome.GetContributions() {
+		if contribution.GetAgentId() == "behavioral" {
+			continue
+		}
+		if !contribution.GetIncluded() {
+			t.Errorf("agent %q was excluded: %v",
+				contribution.GetAgentId(), contribution.GetExclusionReason())
+		}
+	}
+}
+
+// TestCardTestingHistoryRaisesTheDecision is the end-to-end proof that evidence
+// changes outcomes: the same subject, with a different history in the store,
+// crosses from ALLOW into REVIEW.
+func TestCardTestingHistoryRaisesTheDecision(t *testing.T) {
+	h := startPipeline(t, cardTestingHistory())
+	outcome := decide(t, h, transaction()).GetOutcome()
+
 	if outcome.GetDecision() != riskv1.Decision_DECISION_REVIEW {
-		t.Errorf("decision = %v, want REVIEW", outcome.GetDecision())
+		t.Errorf("decision = %v, want REVIEW (aggregate %d)",
+			outcome.GetDecision(), outcome.GetAggregateScore())
 	}
-	if !outcome.GetPolicy().GetFallback() {
-		t.Error("the outcome does not record that the fallback policy decided")
+	if !hasReason(outcome, riskv1.ReasonCode_REASON_CODE_CARD_TESTING_PATTERN) {
+		t.Errorf("card testing was not among the reasons: %v", outcome.GetReasonCodes())
 	}
 
-	if !hasReason(outcome, riskv1.ReasonCode_REASON_CODE_FALLBACK_POLICY_USED) {
-		t.Error("REASON_CODE_FALLBACK_POLICY_USED is missing")
+	// The reason must be attributable to the agent that found it.
+	for _, contribution := range outcome.GetContributions() {
+		if contribution.GetAgentId() == "velocity" && contribution.GetScore() != 85 {
+			t.Errorf("velocity scored %d, want 85", contribution.GetScore())
+		}
 	}
-	if !hasReason(outcome, riskv1.ReasonCode_REASON_CODE_FEATURE_STORE_DEGRADED) {
-		t.Error("REASON_CODE_FEATURE_STORE_DEGRADED is missing")
+}
+
+// TestAnEmptyStoreIsAbsenceNotIgnorance covers the newest account there can be.
+// The store answers, and answers that there is no history; that is a fact the
+// engines can act on, not a reason to stop deciding.
+func TestAnEmptyStoreIsAbsenceNotIgnorance(t *testing.T) {
+	h := startPipeline(t, nil)
+	outcome := decide(t, h, transaction()).GetOutcome()
+
+	if outcome.GetPolicy().GetFallback() {
+		t.Error("an account with no history fell back instead of being assessed")
+	}
+	if hasReason(outcome, riskv1.ReasonCode_REASON_CODE_FEATURE_STORE_DEGRADED) {
+		t.Error("absence of history was reported as store degradation")
+	}
+	// A device with no history at all is new, which is a real observation.
+	if !hasReason(outcome, riskv1.ReasonCode_REASON_CODE_NEW_DEVICE) {
+		t.Errorf("a first-ever device was not reported as new: %v", outcome.GetReasonCodes())
 	}
 }
 
 // TestAnInvalidRequestIsRejectedBeforeAnyAgentIsConsulted checks the boundary
 // rather than the pipeline: a malformed subject must not start an evaluation.
 func TestAnInvalidRequestIsRejectedBeforeAnyAgentIsConsulted(t *testing.T) {
-	h := startPipeline(t)
+	h := startPipeline(t, settledHistory())
 	client := gatewayv1.NewDecisionServiceClient(h.dial(h.endpoints["orchestrator"]))
 
 	ctx, cancel := callContext(t)

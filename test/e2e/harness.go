@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -181,6 +182,20 @@ func (h *harness) waitReady() {
 			time.Sleep(25 * time.Millisecond)
 		}
 	}
+}
+
+// startFeatureStore runs an in-process Redis on a real port, so the
+// orchestrator talks to it exactly as it would to a deployed one.
+func (h *harness) startFeatureStore(history []storedFeature) string {
+	h.t.Helper()
+
+	server := miniredis.RunT(h.t)
+	computedAt := time.Now()
+	for _, feature := range history {
+		server.Set(feature.key(), feature.encoded(computedAt))
+	}
+	h.endpoints["feature-store"] = server.Addr()
+	return server.Addr()
 }
 
 // dial opens a client connection to an already-started service.

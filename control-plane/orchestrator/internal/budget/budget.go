@@ -16,6 +16,9 @@ import (
 // The values are an initial partition, to be revised from measured stage
 // distributions in Phase 1. They are not a claim about achievable latency.
 type Plan struct {
+	// Features is the window for retrieving the evidence agents reason over.
+	Features time.Duration
+
 	// Agents is the window shared by the parallel agent fan-out. It is a
 	// window, not a per-agent allowance: the slowest agent closes it.
 	Agents time.Duration
@@ -28,6 +31,7 @@ type Plan struct {
 // Default returns the apportionment documented in the deadline model.
 func Default() Plan {
 	return Plan{
+		Features: 12 * time.Millisecond,
 		Agents:   8 * time.Millisecond,
 		Sentinel: 3 * time.Millisecond,
 	}
@@ -47,6 +51,16 @@ func Remaining(ctx context.Context, fallback time.Duration) time.Duration {
 	return remaining
 }
 
+// FeatureWindow returns the window to grant the feature fetch, and whether it
+// can run at all.
+//
+// Only the sentinel's share is withheld. If the fetch then overruns, the agents
+// are squeezed and may be skipped entirely, which is the documented behaviour:
+// stages take what remains, and the decision itself is never starved.
+func (p Plan) FeatureWindow(remaining time.Duration) (time.Duration, bool) {
+	return p.window(remaining, p.Features)
+}
+
 // AgentWindow returns the window to grant the agent fan-out, and whether the
 // fan-out can run at all.
 //
@@ -55,14 +69,18 @@ func Remaining(ctx context.Context, fallback time.Duration) time.Duration {
 // overrunning: a decision on partial evidence within the deadline is worth more
 // than a complete one the caller has stopped waiting for.
 func (p Plan) AgentWindow(remaining time.Duration) (time.Duration, bool) {
+	return p.window(remaining, p.Agents)
+}
+
+func (p Plan) window(remaining, want time.Duration) (time.Duration, bool) {
 	usable := remaining - p.Sentinel
 	if usable <= 0 {
 		return 0, false
 	}
-	if usable < p.Agents {
+	if usable < want {
 		return usable, true
 	}
-	return p.Agents, true
+	return want, true
 }
 
 // SentinelWindow returns the protected window for the decision itself, and

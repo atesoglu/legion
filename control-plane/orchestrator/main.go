@@ -20,15 +20,20 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/breaker"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/evaluation"
+	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/registry"
 	"github.com/atesoglu/legion/internal/platform/config"
 	"github.com/atesoglu/legion/internal/platform/runtime"
@@ -41,6 +46,11 @@ const (
 	defaultListenAddress   = ":9200"
 	defaultAgentEndpoints  = "velocity=127.0.0.1:9300,device=127.0.0.1:9400,geo=127.0.0.1:9500"
 	defaultSentinelAddress = "127.0.0.1:9600"
+	defaultFeatureStore    = "127.0.0.1:6379"
+
+	// How long startup waits for dependencies to become reachable before
+	// serving anyway.
+	warmupTimeout = 5 * time.Second
 )
 
 type server struct {
@@ -126,10 +136,23 @@ func main() {
 	conns = append(conns, sentinelConn)
 	defer closeAll(conns, log)
 
+	// Zone 2 holds the only feature-store credential; no agent has a
+	// connection to it (ADR-005). A store that is down degrades an evaluation
+	// rather than failing it, so this does not block startup.
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: envOr("LEGION_FEATURE_STORE", defaultFeatureStore),
+	})
+	defer func() {
+		if err := redisClient.Close(); err != nil {
+			log.Warn("feature store close failed", "error", err)
+		}
+	}()
+
 	coordinator, err := evaluation.New(evaluation.Options{
 		Registry:        agents,
 		Clients:         clients,
 		Sentinel:        sentinelClient{client: dataplanev1.NewSentinelServiceClient(sentinelConn)},
+		Store:           features.NewRedisStore(redisClient),
 		Plan:            budget.Default(),
 		RequestDeadline: cfg.RequestDeadline,
 		Breaker:         breaker.Default(),
@@ -148,8 +171,8 @@ func main() {
 	grpcServer := grpc.NewServer()
 	gatewayv1.RegisterDecisionServiceServer(grpcServer, &server{coordinator: coordinator})
 
+	warm(conns, log)
 	log.Info("agent registry loaded", "agents", agents.IDs())
-
 	err = runtime.Serve(cfg, log,
 		func() error { return grpcServer.Serve(listener) },
 		func(context.Context) error { grpcServer.GracefulStop(); return nil },
@@ -157,6 +180,30 @@ func main() {
 	if err != nil {
 		log.Error("service stopped with error", "error", err)
 		os.Exit(1)
+	}
+}
+
+// warm establishes dependency connections before the first request needs them.
+//
+// gRPC dials lazily, so without this the first evaluation pays for a TCP and
+// HTTP/2 handshake out of a stage budget measured in single-digit milliseconds,
+// and times out. Startup does not block on a dependency that is down: the
+// breakers and the failure model handle that.
+func warm(conns []*grpc.ClientConn, log *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), warmupTimeout)
+	defer cancel()
+
+	for _, conn := range conns {
+		conn.Connect()
+	}
+	for _, conn := range conns {
+		for conn.GetState() != connectivity.Ready {
+			if !conn.WaitForStateChange(ctx, conn.GetState()) {
+				log.Warn("dependency not ready at startup",
+					"target", conn.Target(), "state", conn.GetState().String())
+				break
+			}
+		}
 	}
 }
 

@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"fmt"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -62,6 +63,76 @@ func compromisedDevice() *riskv1.Transaction {
 	subject := transaction()
 	subject.Device.IntegrityCompromised = true
 	return subject
+}
+
+// Seeding the feature store.
+//
+// The key and value formats are written out here rather than imported from the
+// orchestrator, because ADR-015 makes that package importable only from within
+// the orchestrator. The duplication is deliberate and self-checking: this is an
+// independent implementation of the same storage contract, and if the two ever
+// disagree these tests fail rather than passing against a format nothing reads.
+
+const (
+	windowInstant = 1
+	window5m      = 2
+	window10m     = 3
+	window1h      = 4
+	window24h     = 5
+)
+
+// storedFeature is one seeded value.
+type storedFeature struct {
+	scope   string
+	subject string
+	name    string
+	window  int
+	value   int64
+}
+
+func (s storedFeature) key() string {
+	return fmt.Sprintf("f:%s:%s:%s:%d", s.scope, s.subject, s.name, s.window)
+}
+
+func (s storedFeature) encoded(computedAt time.Time) string {
+	return fmt.Sprintf("%d|%d|v1", s.value, computedAt.Unix())
+}
+
+const (
+	fixtureAccount = "acct-01"
+	fixtureDevice  = "dev-01"
+)
+
+// cardTestingHistory is the account history that makes the velocity engine
+// report card testing: many authorisations in five minutes, all of them small.
+// The device is deliberately absent from the store too, because a fresh device
+// is what card testing usually arrives on.
+func cardTestingHistory() []storedFeature {
+	return []storedFeature{
+		{"acct", fixtureAccount, "transactions", window5m, 8},
+		{"acct", fixtureAccount, "transactions", window1h, 8},
+		{"acct", fixtureAccount, "transactions", window24h, 8},
+		{"acct", fixtureAccount, "amount", window5m, 1_600},
+		{"acct", fixtureAccount, "failed_attempts", window10m, 0},
+		{"acct", fixtureAccount, "unique_devices", window24h, 1},
+		{"acct", fixtureAccount, "unique_locations", window24h, 1},
+		{"dev", fixtureDevice, "accounts_per_device", window24h, 1},
+	}
+}
+
+// settledHistory is an established, unremarkable account and device.
+func settledHistory() []storedFeature {
+	return []storedFeature{
+		{"acct", fixtureAccount, "transactions", window5m, 1},
+		{"acct", fixtureAccount, "transactions", window1h, 2},
+		{"acct", fixtureAccount, "transactions", window24h, 5},
+		{"acct", fixtureAccount, "amount", window5m, 4_250},
+		{"acct", fixtureAccount, "failed_attempts", window10m, 0},
+		{"acct", fixtureAccount, "unique_devices", window24h, 1},
+		{"acct", fixtureAccount, "unique_locations", window24h, 1},
+		{"dev", fixtureDevice, "accounts_per_device", window24h, 1},
+		{"dev", fixtureDevice, "device_age", windowInstant, 5_000_000},
+	}
 }
 
 func count(name string, window riskv1.FeatureWindow, value int64, freshness riskv1.FeatureFreshness) *riskv1.Feature {
