@@ -10,22 +10,29 @@ claims.
 
 ---
 
-## Status: Phase 0 — Architecture and Contracts
+## Status: Phase 1 — Deterministic Decision Path
 
-This repository currently contains boundaries, contracts and documentation. The
-transaction path is **not implemented**.
+A transaction presented at the gateway returns a decision, with reason codes and
+a per-agent contribution breakdown, and **no AI in the path**. The chain is
+exercised end to end by a suite that starts the real binaries and speaks gRPC to
+them.
 
 | | |
 |---|---|
 | Contracts | Defined, compiling, linted |
 | Documentation | Architecture, domain, decision, deadline, failure, capability, security, threat model, 16 ADRs |
-| Scaffolding | Go module builds and tests; Rust workspace builds and tests |
-| Risk pipeline | Not implemented (Phase 1) |
-| Feature store, inference, Kubernetes, simulator, replay, benchmarks | Not implemented |
+| Decision path | Gateway → orchestrator → velocity, device, geo → sentinel |
+| Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
+| Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
+| Behavioural agent, capability runtime, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
 currently supported by measurement, and none is made.** That is the point of the
 phase structure: claims arrive with the evidence for them, or not at all.
+
+The weights, thresholds and rule thresholds in use are configured defaults
+awaiting the Phase 5 evaluation framework. They are not a claim about correct
+fraud detection.
 
 ## The idea
 
@@ -90,20 +97,25 @@ explicit, observable outcome.
 ```text
 gateway/          Zone 1 · Go · authn, validation, rate limiting, deadline origin
 control-plane/    Zone 2 · Go
-  orchestrator/   budgets, fan-out, breakers, assembly
+  orchestrator/   budgets, fan-out, breakers, assembly, feature fetch
 data-plane/       Zone 3 · Rust · four deployed processes
   sentinel/       aggregation, policy, decision authority
   engines/        velocity/ device/ geo/ — one process each
 crates/           Rust · shared libraries
   common/         value types with enforced invariants
+  engine/         feature reading and rule assessment
   platform/       config and process lifecycle
   proto/          generated bindings (built by cargo, not committed)
-internal/         Go · configuration and process lifecycle
+internal/         Go · configuration, process lifecycle, pseudonymisation
 protocol/
   protobuf/       authoritative .proto contracts
   gen/go/         generated bindings (committed; CI verifies they match)
+test/e2e/         cross-service suite: starts the real binaries
 docs/             architecture documentation and ADRs
 ```
+
+Component-private code lives under `<component>/internal/`, which makes a
+cross-component import of private code a compile error ([ADR-015](docs/adr/ADR-015-component-private-packages.md)).
 
 Directories for later phases are absent until they contain something. An empty
 directory that promises work is worse than no directory.
@@ -119,16 +131,22 @@ make proto-lint     # buf lint + buf build
 make proto-verify   # regenerating produces no diff
 make go-test        # go vet + go test
 make rust-test      # cargo fmt --check + clippy -D warnings + cargo test
+make e2e-test       # builds the binaries, then runs the cross-service suite
 ```
 
 The repository builds without buf installed: generated bindings are committed.
+
+The cross-service suite is behind a build tag, so `go test ./...` stays a fast
+unit run. It starts a sentinel, three engines, an orchestrator, a gateway and an
+in-process Redis on ephemeral ports, and skips with an instruction when the Rust
+binaries have not been built.
 
 ## Phases
 
 | Phase | Contents | Status |
 |---|---|---|
 | 0 | Architecture, contracts, threat model, ADRs | **Complete** |
-| 1 | Deterministic pipeline, feature store, simulator, benchmarks | Not started |
+| 1 | Deterministic pipeline, feature store, pseudonymisation, cross-service tests | **Complete** |
 | 2 | Behavioural SLM agent, structured output, model governance | Not started |
 | 3 | Capability runtime and enforcement tests | Not started |
 | 4 | Kubernetes, zero trust, observability, autoscaling | Not started |
@@ -137,7 +155,12 @@ The repository builds without buf installed: generated bindings are committed.
 | 7 | Benchmarks, results, portfolio release | Not started |
 
 Phase 1 delivers a system that is useful **without any AI**. That is a
-requirement, not a milestone.
+requirement, not a milestone, and it is now met.
+
+What Phase 1 deliberately does **not** include: any measurement of latency or
+detection quality, a writer for the feature store, a local cache tier for store
+outages, or transport security. Each belongs to a later phase and none is
+claimed here.
 
 ## What this project does not claim
 

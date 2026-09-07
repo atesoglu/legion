@@ -1,7 +1,9 @@
 # Deadline model
 
-Status: Phase 0. The model is specified here and the default is configured in
-`internal/platform/config`. Nothing has been measured yet.
+Status: Phase 1. Apportionment, propagation and circuit breaking are
+implemented; the gateway is the only origin and the sentinel's share is withheld
+before any other stage is granted one. **Nothing has been measured.** The
+allocations below remain an initial partition, not an observed distribution.
 
 ## 1. The target
 

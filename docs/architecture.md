@@ -1,7 +1,8 @@
 # Architecture
 
-Status: Phase 0. This document describes the system Legion is being built to
-be. Where behaviour does not exist yet, it says so.
+Status: Phase 1. The deterministic decision path described here is implemented
+and exercised end to end. Where behaviour does not exist yet, it says so; §9
+lists what remains.
 
 ## 1. What Legion is
 
@@ -271,10 +272,26 @@ that promise work are worse than no directories.
 
 ## 9. What is not built
 
-Phase 0 delivers boundaries, contracts and documentation. The following exist
-only as documented intent: the feature store, the inference runtime, the
+The deterministic path is complete: the gateway, the orchestrator, the three
+engines and the sentinel all run, and a transaction presented at the edge
+returns a decision.
+
+The following exist only as documented intent: the inference runtime, the
 behavioural agent, the capability runtime implementation, Kubernetes manifests,
-the simulator, the replay engine, the evaluation framework and all benchmarks.
+the fraud simulator, the replay engine, the evaluation framework and all
+benchmarks.
+
+Three gaps inside the parts that do exist are worth naming, because each is
+easy to mistake for working:
+
+- **Nothing writes features.** The orchestrator reads the store; no ingest path
+  populates it, so a deployed store stays empty and every evaluation sees
+  absence rather than history.
+- **There is no local cache tier.** ADR-007 calls for one with an explicit
+  staleness window; without it a store outage degrades every evaluation at once.
+- **Transport is not secured.** Services speak plaintext gRPC between
+  themselves, and callers authenticate with shared keys. mTLS and workload
+  identity are Phase 4 (ADR-011).
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made.

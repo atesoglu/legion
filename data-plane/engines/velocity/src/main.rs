@@ -4,8 +4,8 @@
 //! fault here costs one signal: the orchestrator excludes it, renormalises the
 //! remaining weights and continues.
 //!
-//! Phase 0 scaffolding: the service starts, serves its contract as
-//! `Unimplemented`, and shuts down cleanly. Behaviour arrives in Phase 1.
+//! Thresholds are configured defaults awaiting Phase 5 measurement. They are
+//! not a claim about correct fraud detection.
 
 use std::error::Error;
 use std::time::Instant;

@@ -1,8 +1,13 @@
 # Threat model
 
-Status: Phase 0. Threats and intended mitigations are documented here.
+Status: Phase 1. Threats and intended mitigations are documented here.
 Mitigations marked *planned* are not implemented. A mitigation without a test
 is an assumption, and Phase 6 exists to convert them into evidence.
+
+What is enforced today is confined to the edge: callers are authenticated,
+every field is validated, unbounded strings and un-pseudonymised identifiers are
+rejected, and each caller is rate limited. Network isolation, workload identity
+and capability brokering are not implemented.
 
 ## Scope
 

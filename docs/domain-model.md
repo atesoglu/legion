@@ -1,6 +1,6 @@
 # Domain model
 
-Status: Phase 0. This document fixes the vocabulary. Where a word is used
+Status: Phase 1. This document fixes the vocabulary. Where a word is used
 loosely in the payments industry, Legion picks one meaning and uses only that.
 
 ## 1. The core abstraction

@@ -1,7 +1,10 @@
 # Security boundaries
 
-Status: Phase 0. Boundaries are defined here; enforcement is Phase 3
-(capabilities) and Phase 4 (network, identity, workload hardening).
+Status: Phase 1. The Zone 0 boundary is enforced: callers authenticate, every
+field is validated, and an identifier that is not a pseudonym is rejected before
+it enters the platform. Everything between zones is still open — services speak
+plaintext gRPC and hold no workload identity. Capability enforcement is Phase 3;
+network, identity and workload hardening are Phase 4.
 
 ## 1. Trust zones
 

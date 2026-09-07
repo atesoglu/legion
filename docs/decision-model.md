@@ -1,7 +1,9 @@
 # Decision model
 
-Status: Phase 0. The model is specified here and expressed in types in
-`crates/common`. The aggregation implementation arrives in Phase 1.
+Status: Phase 1. The model is implemented: the value types are in
+`crates/common`, the aggregation with it, and the sentinel applies it. The
+weights and thresholds below are configured defaults awaiting Phase 5
+measurement.
 
 ## 1. Decision authority
 

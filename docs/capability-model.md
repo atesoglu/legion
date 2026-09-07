@@ -1,7 +1,8 @@
 # Capability model
 
-Status: Phase 0. The contract exists (`legion/agent/v1/capability.proto`). The
-runtime is Phase 3.
+Status: Phase 1. The contract exists (`legion/agent/v1/capability.proto`) and
+nothing yet enforces it: no capability broker runs, and no agent holds a
+credential to broker access to. The runtime is Phase 3.
 
 ## 1. Problem
 

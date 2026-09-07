@@ -1,7 +1,10 @@
 # Failure model
 
-Status: Phase 0. Specified here; implemented and tested by failure injection in
-Phase 1 and Phase 6.
+Status: Phase 1. The degraded paths are implemented — an agent that fails is
+excluded and the remaining weights renormalised, a store that cannot answer
+leaves every feature explicitly unavailable, and an exhausted budget skips
+stages rather than starving the decision. Systematic failure injection, which is
+what turns these from claims into tested behaviour, is Phase 6.
 
 ## 1. Principle
 
