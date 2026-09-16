@@ -1,4 +1,4 @@
-# ADR-021: Transaction idempotency keys
+# ADR-019: Transaction idempotency keys
 
 **Status:** Accepted
 **Date:** 2026-09-16
@@ -59,7 +59,7 @@ Enforcement:
    key's cached response.
 5. Case creation (ADR-017) reuses the same key: `CaseTrigger` carries
    `idempotency_key`, and the investigation controller upserts on it, so a
-   duplicate trigger (the queue's own at-least-once delivery, per ADR-019)
+   duplicate trigger (the queue's own at-least-once delivery, per ADR-017)
    cannot open two cases for one transaction.
 
 ## Alternatives considered
@@ -94,7 +94,7 @@ real.
   with a migration window (accept-but-warn before enforce), not a flag day.
 - **The gateway needs a dedup store** (small, bounded-retention — Redis with
   a TTL is the natural fit, reusing operational familiarity from the feature
-  store without sharing its instance, for the same isolation reason ADR-019
+  store without sharing its instance, for the same isolation reason ADR-017
   gives for the task queue).
 - **"Materially different body, same key" detection requires comparing
   requests**, which is a small but real piece of logic that must be kept

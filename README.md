@@ -155,7 +155,7 @@ binaries have not been built.
 ## Phases
 
 Restructured 2026-09-16 to fold in an investigation/case-management scope
-(ADR-017 to ADR-021) and swap the original Phase 2/3 order — see
+(ADR-017 to ADR-019) and swap the original Phase 2/3 order — see
 [project-plan.md](docs/project-plan.md) §34 for the full reasoning.
 
 | Phase | Contents | Status |

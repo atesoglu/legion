@@ -4,7 +4,7 @@ Status: Phase 2 (restructured; moved ahead of the behavioural agent, ADR-017).
 The contract exists (`legion/agent/v1/capability.proto`) and nothing yet
 enforces it: no capability broker runs, and no agent holds a credential to
 broker access to. This model governs Zone 6 investigation agents
-(ADR-017/018) as well as the behavioural agent — there is one enforcement
+(ADR-017) as well as the behavioural agent — there is one enforcement
 mechanism, not one per zone.
 
 ## 1. Problem
@@ -93,7 +93,7 @@ Intended initial manifests:
 | Behavioral | `GET_TRANSACTION`, `GET_ACCOUNT_FEATURES`, `SUBMIT_EVALUATION` | Small named allow-list; low `max_invocations` |
 
 Investigation agents (Zone 6, ADR-017) are manifested the same way, except
-their grants are `allowed_tools` entries from `agent_definitions` (ADR-018)
+their grants are `allowed_tools` entries from `agent_definitions` (ADR-017)
 rather than a fixed capability enum member per feature family — a tool
 registry is a database of grantable verbs, which is exactly what this
 section already describes in the abstract. The enforcement order in §5 is

@@ -34,11 +34,9 @@ history.
 | [014](ADR-014-agent-set-is-configuration.md) | The agent set is configuration | Accepted | 1 |
 | [015](ADR-015-component-private-packages.md) | Component-private packages | Accepted | 1 |
 | [016](ADR-016-deployment-identity-and-packaging.md) | Deployment identity and packaging | Accepted | 4 |
-| [017](ADR-017-investigation-plane.md) | Investigation plane as Zone 6 | Accepted | 2 |
-| [018](ADR-018-agent-registry.md) | Postgres-backed agent registry | Accepted | 2 |
-| [019](ADR-019-investigation-task-queue.md) | Redis Streams as the investigation task queue | Accepted | 2 |
-| [020](ADR-020-normalised-lineage-schema.md) | Normalised reproducibility schema (supersedes commit `47edb19`) | Accepted | 2 |
-| [021](ADR-021-transaction-idempotency.md) | Transaction idempotency keys | Accepted | 2 |
+| [017](ADR-017-investigation-plane.md) | Investigation plane — zone, agent registry and task queue | Accepted | 2 |
+| [018](ADR-018-normalised-lineage-schema.md) | Normalised reproducibility schema (supersedes commit `47edb19`) | Accepted | 2 |
+| [019](ADR-019-transaction-idempotency.md) | Transaction idempotency keys | Accepted | 2 |
 
 "Accepted" means the decision has been made and is binding on implementation.
 It does not mean the thing has been built; the phase column says when it is

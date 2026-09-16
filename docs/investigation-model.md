@@ -1,6 +1,6 @@
 # Investigation model
 
-Status: Documented intent only (ADR-017 to ADR-021). Nothing in this document
+Status: Documented intent only (ADR-017 to ADR-019). Nothing in this document
 is built. It exists so that Zone 6 is specified before it is coded, the same
 discipline `decision-model.md` held Zone 2/3 to in Phase 0.
 
@@ -51,7 +51,7 @@ Extending `domain-model.md`'s glossary, scoped to Zone 6:
 | **Case** | One investigable unit, opened for a transaction that reached `REVIEW` (or was explicitly escalated). Has a status and a priority. |
 | **Investigation** | One attempt at investigating a case. A case may have more than one over time. |
 | **Task** | One agent invocation within an investigation, with its own lifecycle. |
-| **Agent definition** | A registered logical agent: prompt, allowed tools, model policy, version, enabled (ADR-018). Distinct from the three deterministic Rust engines, which stay on the static registry. |
+| **Agent definition** | A registered logical agent: prompt, allowed tools, model policy, version, enabled (ADR-017). Distinct from the three deterministic Rust engines, which stay on the static registry. |
 | **Tool execution** | One tool call a worker made on an agent's behalf: arguments, result, status, duration. Complete auditability of what a worker actually did, independent of what the agent concluded from it. |
 | **Evidence** | A fact gathered during investigation. Exists independently of any agent's interpretation. |
 | **Agent finding** | One agent's observation, hypothesis and confidence, referencing the evidence it is based on. |
@@ -79,8 +79,8 @@ OPEN → INVESTIGATING → WAITING → COMPLETED
                               → CLOSED
 ```
 
-Case creation is idempotent on the transaction's idempotency key (ADR-021),
-because the task queue's at-least-once delivery (ADR-019) means a `CaseTrigger`
+Case creation is idempotent on the transaction's idempotency key (ADR-019),
+because the task queue's at-least-once delivery (ADR-017) means a `CaseTrigger`
 may be delivered more than once, and it must never open two cases for one
 transaction.
 
@@ -151,8 +151,7 @@ principle to hold at a much larger N — "thousands of logical agents" is a
 plausible future for an investigation platform in a way it never was for
 three engines called inside an 8 ms window.
 
-Two mechanisms make that concretely true rather than aspirational (ADR-018,
-ADR-019):
+Two mechanisms make that concretely true rather than aspirational (ADR-017):
 
 - **Agent definitions are Postgres rows**, hot-registerable without deploying
   anything, distinct from the static env-var registry the real-time agents
@@ -175,7 +174,7 @@ by benchmarking (Phase 7), not assumed.
 An investigation agent is capability-bounded exactly as the behavioural agent
 is (`capability-model.md`), not by a separate, looser mechanism invented for
 Zone 6. A tool call is checked against the agent's `allowed_tools`
-(ADR-018) before it runs; the LLM is never permitted to select an arbitrary
+(ADR-017) before it runs; the LLM is never permitted to select an arbitrary
 Python function, shell command, SQL statement or network destination — it
 selects from a closed, named tool registry, and the runtime — not the model —
 decides whether the call is authorised.

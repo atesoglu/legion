@@ -328,12 +328,12 @@ easy to mistake for working:
   produces a `DecisionLineage` with populated `GovernedVersions`, persisted to
   PostgreSQL and returned inline on request. That is what replay (ADR-013) and
   shadow mode (ADR-012) require, but neither has been built yet to consume it.
-  Its schema is also known to be wrong in one respect: ADR-020 supersedes the
+  Its schema is also known to be wrong in one respect: ADR-018 supersedes the
   denormalised shape this shipped with, and a migration is owed before Zone 6
   or replay can query it directly.
 - **There is no transaction idempotency key.** A caller resubmitting an
   identical transaction gets a second decision and a second lineage row.
-  ADR-021 specifies the fix; it is not implemented, and it blocks Zone 6 from
+  ADR-019 specifies the fix; it is not implemented, and it blocks Zone 6 from
   being safe to build on until it is, since case creation needs the same key.
 
 There is also no observability: no metrics and no tracing, so none of the

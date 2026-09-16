@@ -180,7 +180,7 @@ not by an actual replay run.
 
 The schema this was shipped with (one row, the whole `DecisionLineage`
 message marshalled into a `bytea` column, plus a handful of indexed columns)
-is superseded by ADR-020, which normalises it into per-concept tables so that
+is superseded by ADR-018, which normalises it into per-concept tables so that
 Zone 6 and replay can query it directly rather than deserialising a blob per
 row. The migration is owed, not yet applied; see `architecture.md` §9.
 

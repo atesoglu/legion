@@ -38,7 +38,7 @@ of this shape, not actuarial estimates.
 | T-10 | Feature poisoning | High | Medium | Write path separation, bounded rules, anomaly detection |
 | T-11 | Malformed inference output | Medium | High | Strict validation, controlled rejection |
 | T-12 | Denial of service | High | Medium | Rate limiting, deadlines, breakers, load shedding |
-| T-13 | Replay attack | Medium | Medium | Idempotency keys (ADR-021, not implemented), transaction-level deduplication |
+| T-13 | Replay attack | Medium | Medium | Idempotency keys (ADR-019, not implemented), transaction-level deduplication |
 | T-14 | Malicious or compromised investigation agent | High | Medium | Same capability boundary as T-01/T-02, extended to Zone 6 (ADR-017) |
 | T-15 | Cross-case data access | High | Medium | Per-task capability scoping, explicit cross-case access tests |
 
@@ -262,7 +262,7 @@ again to obtain a favourable outcome.
 
 - **Impact.** Medium.
 - **Likelihood.** Medium.
-- **Mitigation.** **Not implemented.** ADR-021 specifies a caller-supplied
+- **Mitigation.** **Not implemented.** ADR-019 specifies a caller-supplied
   idempotency key, enforced at the gateway: a resubmission returns the
   original decision rather than a new one, and a reused key against a
   materially different body is rejected. Until it ships, `Transaction`
@@ -275,7 +275,7 @@ again to obtain a favourable outcome.
   instrumented yet — see the observability gap in `architecture.md` §9.
 - **Residual risk.** Legion does not control the caller's use of its response.
   If the calling system does not bind a decision to the transaction it
-  requested, replay is possible outside Legion's boundary. Once ADR-021 ships,
+  requested, replay is possible outside Legion's boundary. Once ADR-019 ships,
   residual risk narrows to that boundary; today it also includes everything
   inside Legion's own boundary.
 

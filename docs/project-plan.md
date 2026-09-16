@@ -1120,7 +1120,7 @@ final_decision
 
 The project should demonstrate how this lineage can be used during an investigation.
 
-Shipped initially as one denormalised table (`decision_lineage`); ADR-020
+Shipped initially as one denormalised table (`decision_lineage`); ADR-018
 supersedes that shape with the normalised, queryable schema §49 and Zone 6
 (§45) depend on.
 
@@ -1359,14 +1359,14 @@ Implement:
 * synthetic transaction generator;
 * unit/integration tests;
 * decision lineage, constructed and persisted (added after the initial
-  Phase 1 pass; see ADR-020 for the schema this now targets).
+  Phase 1 pass; see ADR-018 for the schema this now targets).
 
 Target:
 
 **A complete transaction → risk decision pipeline without LLM inference.**
 
 **Status: Complete.** Decision lineage ships to the schema described in
-`internal/lineage`; ADR-020 supersedes that schema's shape and the migration
+`internal/lineage`; ADR-018 supersedes that schema's shape and the migration
 to it is Phase 2 work, not a Phase 1 regression.
 
 ---
@@ -1381,18 +1381,18 @@ place (ADR-005, ADR-017).
 
 Implement:
 
-* transaction idempotency keys (ADR-021) — a prerequisite, not an
+* transaction idempotency keys (ADR-019) — a prerequisite, not an
   afterthought: case creation in this same phase needs the same key to avoid
   duplicate cases;
 * restricted capability protocol, capability authorization, agent isolation,
   resource mediation, capability audit trail, denial handling (the original
   Phase 3 scope, moved here);
-* Postgres-backed agent registry (ADR-018), covering behavioural and
+* Postgres-backed agent registry (ADR-017), covering behavioural and
   investigation agents — the three deterministic engines stay on the static
   registry;
 * case creation on `REVIEW` (Zone 6, ADR-017), asynchronous, off the 80 ms
   budget;
-* the investigation task queue (Redis Streams, ADR-019) and the generic
+* the investigation task queue (Redis Streams, ADR-017) and the generic
   worker pool;
 * a rule-based investigation controller (§48) and at least one real
   investigation agent (§45) exercised end to end, initially with a mocked
@@ -1740,11 +1740,11 @@ ADR-007: Why consolidated Rust data-plane agents?
 ADR-008: Why Redis/Dragonfly?
 ADR-009: Why Kubernetes?
 ADR-010: Why the 80ms deadline?
-ADR-017: Why an investigation plane, and why it is asynchronous?
-ADR-018: Why a Postgres-backed agent registry, separate from the static one?
-ADR-019: Why Redis Streams, and why a separate instance from the feature store?
-ADR-020: Why normalise the lineage schema, and why supersede rather than edit it?
-ADR-021: Why transaction idempotency keys, and why at the gateway?
+ADR-017: Why an investigation plane, why it is asynchronous, why its agent
+          registry is Postgres-backed, and why its task queue is Redis
+          Streams on a separate instance from the feature store?
+ADR-018: Why normalise the lineage schema, and why supersede rather than edit it?
+ADR-019: Why transaction idempotency keys, and why at the gateway?
 ```
 
 Each ADR should document:
@@ -1858,7 +1858,7 @@ deterministic real-time scoring to asynchronous, evidence-based investigation.
 ```text
 DecisionOutcome.decision == REVIEW
         │
-        ▼  (async: lineage writer publishes CaseTrigger, ADR-017/019)
+        ▼  (async: lineage writer publishes CaseTrigger, ADR-017)
    Case created
         │
         ▼
@@ -1869,12 +1869,12 @@ DecisionOutcome.decision == REVIEW
         │
         │  signal analysis → agent selection (rule-based initially)
         ▼
-   Task(s) created ──► Redis Streams (investigation.tasks, ADR-019)
+   Task(s) created ──► Redis Streams (investigation.tasks, ADR-017)
         │
         ▼
    Generic Worker
         │
-        │  load agent definition (ADR-018) → check tool authorization (ADR-005)
+        │  load agent definition (ADR-017) → check tool authorization (ADR-005)
         │  → execute tool(s) → call shared inference (Phase 3) → validate output
         ▼
    Evidence + Agent Finding persisted
@@ -1936,7 +1936,7 @@ PENDING → RUNNING → COMPLETED
 ```
 
 The database (not the queue) is the source of truth for this state machine,
-per ADR-019. A worker transitions a task to `RUNNING` in Postgres before doing
+per ADR-017. A worker transitions a task to `RUNNING` in Postgres before doing
 any work, so a crash between claiming a task and finishing it is visible and
 recoverable rather than silently lost.
 
@@ -1962,7 +1962,7 @@ Case                — one per transaction that reached REVIEW (or was
 Investigation       — one attempt at investigating a Case; a case may have
                        more than one over time (re-opened, escalated).
 Task                — one agent invocation within an investigation.
-AgentDefinition      — a registered logical agent (ADR-018): prompt, allowed
+AgentDefinition      — a registered logical agent (ADR-017): prompt, allowed
                        tools, model policy, version, enabled.
 ToolExecution        — one tool call a worker made on an agent's behalf, with
                        arguments, result, status and duration — complete
@@ -1997,15 +1997,15 @@ OPEN → INVESTIGATING → WAITING → COMPLETED
                               → CLOSED
 ```
 
-Case creation is idempotent on `(idempotency_key)` (ADR-021): the queue's own
-at-least-once delivery (ADR-019) must not be able to open two cases for one
+Case creation is idempotent on `(idempotency_key)` (ADR-019): the queue's own
+at-least-once delivery (ADR-017) must not be able to open two cases for one
 transaction.
 
 ---
 
 # 47. Agent Registry (Postgres-backed)
 
-ADR-018's schema, restated here alongside the other domain objects:
+ADR-017's schema, restated here alongside the other domain objects:
 
 ```text
 agent_definitions
@@ -2017,7 +2017,7 @@ agent_definitions
 
 Registering an agent does not require deploying anything: it is a row plus a
 worker image capable of interpreting `agent_id`'s tool and model policy. The
-three deterministic Rust engines are **not** in this table — see ADR-018 for
+three deterministic Rust engines are **not** in this table — see ADR-017 for
 why they stay on the static, startup-parsed registry from Phase 1.
 
 The rollout sequence for a new investigation agent mirrors the one ADR-014
@@ -2035,7 +2035,7 @@ already established for the real-time agents, applied here:
 
 # 48. Task Queue and Worker Model
 
-ADR-019's mechanism, restated operationally:
+ADR-017's mechanism, restated operationally:
 
 ```text
 Investigation Controller

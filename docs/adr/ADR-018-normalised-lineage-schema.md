@@ -1,4 +1,4 @@
-# ADR-020: Normalised reproducibility schema for decision lineage
+# ADR-018: Normalised reproducibility schema for decision lineage
 
 **Status:** Accepted (supersedes the schema shipped in commit `47edb19`)
 **Date:** 2026-09-16
