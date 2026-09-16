@@ -23,8 +23,9 @@ const apiKey = "e2e-caller-key-that-is-long-enough-to-pass"
 
 // startPipeline brings up the feature store, the sentinel, the three engines,
 // the orchestrator and the gateway, wired to each other exactly as they are in
-// a deployment.
-func startPipeline(t *testing.T, history []storedFeature) *harness {
+// a deployment. extraEnv is appended to the orchestrator's environment, for
+// tests that need to point it at a real lineage store.
+func startPipeline(t *testing.T, history []storedFeature, extraEnv ...string) *harness {
 	t.Helper()
 
 	h := newHarness(t)
@@ -34,11 +35,11 @@ func startPipeline(t *testing.T, history []storedFeature) *harness {
 	device := h.startRust("legion-device", "device")
 	geo := h.startRust("legion-geo", "geo")
 
-	orchestrator := h.startGo("control-plane/orchestrator", "orchestrator", []string{
+	orchestrator := h.startGo("control-plane/orchestrator", "orchestrator", append([]string{
 		"LEGION_AGENT_ENDPOINTS=velocity=" + velocity + ",device=" + device + ",geo=" + geo,
 		"LEGION_SENTINEL_ENDPOINT=" + sentinel,
 		"LEGION_FEATURE_STORE=" + store,
-	})
+	}, extraEnv...))
 
 	h.startGo("gateway", "gateway", []string{
 		"LEGION_ORCHESTRATOR_ENDPOINT=" + orchestrator,

@@ -154,16 +154,27 @@ the reason.
 
 ## 7. Lineage and reproducibility
 
-**Not yet implemented.** `DecisionLineage` exists in the contract and nothing
-constructs it, so a decision made today cannot be reconstructed tomorrow. This
-section describes the intent; until it is built, the reproducibility claim below
-is a design commitment rather than a property of the running system.
-
-Every evaluation will emit a `DecisionLineage` containing the decision, every
+Every evaluation emits a `DecisionLineage` containing the decision, every
 agent evaluation (successful or not), the timing of each stage against its
 budget, observed failures, and `GovernedVersions` — the pinned versions of the
 agents, policy, feature catalogue, model, prompt, output schema and contract
-set.
+set. It is constructed by the orchestrator once the sentinel answers, and
+persisted to PostgreSQL off the hot path (ADR-007), so a slow or unreachable
+lineage store degrades lineage, never the decision. It is returned inline on
+the response only when the caller sets `options.include_lineage`; otherwise it
+is written but not attached to the reply.
+
+Model, prompt and output-schema versions are present only once the
+behavioural agent exists to populate them; until then those three fields of
+`GovernedVersions` are absent, not wrong. Likewise, an agent's version is
+recorded only when it actually answered — a failed agent's version is not
+guessed at.
+
+Lineage is recorded for every evaluation; nothing yet reads it back. Replay
+(ADR-013), the evaluation framework and shadow mode (ADR-012) are what
+consume a lineage dataset, and none of the three is built yet. Until one is,
+the reproducibility claim below is exercised only by
+`test/e2e`'s direct read of the stored rows, not by an actual replay run.
 
 The reproducibility claim Legion makes is precise:
 

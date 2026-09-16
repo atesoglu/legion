@@ -3,6 +3,7 @@ package evaluation
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ type fakeAgent struct {
 	score        int32
 	err          error
 	delay        time.Duration
+	version      *commonv1.Version
 	calls        atomic.Int32
 	lastFeatures atomic.Int32
 }
@@ -43,7 +45,7 @@ func (f *fakeAgent) Evaluate(ctx context.Context, in *agentv1.EvaluateRequest) (
 	}
 	return &agentv1.EvaluateResponse{
 		Result: &agentv1.EvaluateResponse_Signal{
-			Signal: &riskv1.RiskSignal{Score: uint32(f.score), Confidence: 100},
+			Signal: &riskv1.RiskSignal{Score: uint32(f.score), Confidence: 100, AgentVersion: f.version},
 		},
 	}, nil
 }
@@ -94,6 +96,23 @@ func (f *fakeStore) Fetch(_ context.Context, requests []features.Request) ([]*ri
 	return out, nil
 }
 
+type fakeLineageStore struct {
+	mu       sync.Mutex
+	recorded []*riskv1.DecisionLineage
+}
+
+func (f *fakeLineageStore) Record(entry *riskv1.DecisionLineage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.recorded = append(f.recorded, entry)
+}
+
+func (f *fakeLineageStore) entries() []*riskv1.DecisionLineage {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*riskv1.DecisionLineage(nil), f.recorded...)
+}
+
 func subject() *riskv1.Transaction {
 	return &riskv1.Transaction{
 		Account: &riskv1.Account{Id: &commonv1.PseudonymousId{Value: "acct-1"}},
@@ -130,6 +149,7 @@ func coordinatorWithStore(
 		Clients:         clients,
 		Sentinel:        sentinel,
 		Store:           store,
+		Lineage:         &fakeLineageStore{},
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker:         breaker.Default(),
 	})
@@ -153,6 +173,7 @@ func TestNewRefusesARegisteredAgentWithNoClient(t *testing.T) {
 		Clients:  map[string]AgentClient{"velocity": &fakeAgent{}},
 		Sentinel: &fakeSentinel{},
 		Store:    &fakeStore{},
+		Lineage:  &fakeLineageStore{},
 	})
 	if err == nil {
 		t.Fatal("New accepted a registry it could not serve")
@@ -164,9 +185,22 @@ func TestNewRefusesToRunWithoutAFeatureStore(t *testing.T) {
 		Registry: agents(),
 		Clients:  healthy(),
 		Sentinel: &fakeSentinel{},
+		Lineage:  &fakeLineageStore{},
 	})
 	if err == nil {
 		t.Fatal("New accepted a coordinator with no feature store")
+	}
+}
+
+func TestNewRefusesToRunWithoutALineageStore(t *testing.T) {
+	_, err := New(Options{
+		Registry: agents(),
+		Clients:  healthy(),
+		Sentinel: &fakeSentinel{},
+		Store:    &fakeStore{},
+	})
+	if err == nil {
+		t.Fatal("New accepted a coordinator with no lineage store")
 	}
 }
 
@@ -175,7 +209,7 @@ func TestEveryRegisteredAgentIsConsulted(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -193,7 +227,7 @@ func TestEvaluationsReachTheSentinelInAgentOrder(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, healthy(), sentinel)
 
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -211,7 +245,7 @@ func TestAFailedAgentIsReportedRatherThanOmitted(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -237,7 +271,7 @@ func TestASlowAgentDoesNotDelayTheOthersBeyondTheWindow(t *testing.T) {
 	c := coordinator(t, clients, sentinel)
 
 	started := time.Now()
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	elapsed := time.Since(started)
@@ -261,6 +295,7 @@ func TestAnOpenBreakerSkipsTheCallEntirely(t *testing.T) {
 		Clients:         clients,
 		Sentinel:        &fakeSentinel{},
 		Store:           &fakeStore{},
+		Lineage:         &fakeLineageStore{},
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker: breaker.Config{
 			MinimumRequests: 2,
@@ -274,7 +309,7 @@ func TestAnOpenBreakerSkipsTheCallEntirely(t *testing.T) {
 	}
 
 	for range 3 {
-		if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+		if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
 	}
@@ -294,7 +329,7 @@ func TestAnExhaustedBudgetSkipsAgentsButStillDecides(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Millisecond)
 	defer cancel()
 
-	outcome, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, "")
+	outcome, _, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, "")
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -317,7 +352,7 @@ func TestAnExpiredDeadlineProducesAnErrorNotADecision(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
-	if _, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, ""); status.Code(err) != codes.DeadlineExceeded {
+	if _, _, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, ""); status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("error = %v, want DeadlineExceeded", err)
 	}
 }
@@ -325,7 +360,7 @@ func TestAnExpiredDeadlineProducesAnErrorNotADecision(t *testing.T) {
 func TestAnUnavailableSentinelIsAnErrorNotAnAllow(t *testing.T) {
 	c := coordinator(t, healthy(), &fakeSentinel{err: errors.New("down")})
 
-	if _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err == nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err == nil {
 		t.Fatal("Evaluate returned a decision without the sentinel")
 	}
 }
@@ -335,7 +370,7 @@ func TestFeaturesReachTheAgentsThatNeedThem(t *testing.T) {
 	store := &fakeStore{}
 	c := coordinatorWithStore(t, clients, &fakeSentinel{}, store)
 
-	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -353,7 +388,7 @@ func TestFreshEvidenceIsNotReportedAsDegraded(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinatorWithStore(t, healthy(), sentinel, &fakeStore{})
 
-	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if sentinel.degrade {
@@ -366,7 +401,7 @@ func TestAStoreOutageDegradesTheDecisionRatherThanFailingIt(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinatorWithStore(t, clients, sentinel, &fakeStore{err: errors.New("store down")})
 
-	outcome, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	outcome, _, err := c.Evaluate(context.Background(), "e1", subject(), "")
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -392,7 +427,7 @@ func TestStaleEvidenceIsReportedAsDegraded(t *testing.T) {
 	}}}
 	c := coordinatorWithStore(t, healthy(), sentinel, store)
 
-	if _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if !sentinel.degrade {
@@ -404,5 +439,129 @@ func TestThePlanDefaultsWhenUnset(t *testing.T) {
 	c := coordinator(t, healthy(), &fakeSentinel{})
 	if c.plan != budget.Default() {
 		t.Fatalf("plan = %+v, want the documented default", c.plan)
+	}
+}
+
+func TestEvaluateRecordsLineageForEveryDecision(t *testing.T) {
+	sentinel := &fakeSentinel{}
+	c := coordinator(t, healthy(), sentinel)
+
+	outcome, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	store := c.lineage.(*fakeLineageStore)
+	entries := store.entries()
+	if len(entries) != 1 {
+		t.Fatalf("recorded lineage entries = %d, want 1", len(entries))
+	}
+	if entries[0] != lineage {
+		t.Fatal("the entry persisted is not the entry returned to the caller")
+	}
+
+	entry := entries[0]
+	if entry.GetDecisionId() != "e1" {
+		t.Errorf("decision_id = %q, want %q", entry.GetDecisionId(), "e1")
+	}
+	if entry.GetOutcome() != outcome {
+		t.Error("lineage outcome is not the decision that was returned")
+	}
+	if len(entry.GetEvaluations()) != 3 {
+		t.Fatalf("lineage evaluations = %d, want 3", len(entry.GetEvaluations()))
+	}
+	if len(entry.GetSpans()) != 3 {
+		t.Fatalf("lineage spans = %d, want 3 (feature_fetch, deterministic_agents, sentinel)", len(entry.GetSpans()))
+	}
+	if entry.GetDeadline().AsDuration() <= 0 {
+		t.Error("lineage deadline was not recorded")
+	}
+	// Not asserted > 0: an in-memory evaluation against fakes can complete
+	// within the host clock's resolution, so only presence is checked here.
+	if entry.GetTotalElapsed() == nil {
+		t.Error("lineage total_elapsed was not recorded")
+	}
+}
+
+func TestLineageGovernedVersionsCarryThePolicyAndCatalogue(t *testing.T) {
+	sentinel := &fakeSentinel{}
+	c := coordinator(t, healthy(), sentinel)
+
+	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	versions := lineage.GetVersions()
+	if versions.GetFeatureCatalogue().GetVersion() != features.CatalogueVersion {
+		t.Errorf("feature_catalogue version = %q, want %q",
+			versions.GetFeatureCatalogue().GetVersion(), features.CatalogueVersion)
+	}
+	if versions.GetContract() == nil {
+		t.Error("contract version was not recorded")
+	}
+	// The fake sentinel does not populate a policy ref; a real one always
+	// does (see decide.rs), so this only proves the field is wired through.
+	if versions.GetModel() != nil || versions.GetPrompt() != nil || versions.GetOutputSchema() != nil {
+		t.Error("model/prompt/output-schema versions were set despite no behavioural agent existing")
+	}
+}
+
+func TestLineageRecordsAgentVersionsFromSuccessfulSignalsOnly(t *testing.T) {
+	clients := healthy()
+	clients["velocity"] = &fakeAgent{score: 10, version: &commonv1.Version{Name: "velocity", Version: "1.2.3"}}
+	clients["geo"] = &fakeAgent{err: errors.New("down")}
+	sentinel := &fakeSentinel{}
+	c := coordinator(t, clients, sentinel)
+
+	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	// The failed agent (geo) and the version-less one (device) contribute no
+	// version; only the one that actually answered with a version does.
+	versions := lineage.GetVersions().GetAgents()
+	if len(versions) != 1 {
+		t.Fatalf("agent versions = %d, want 1", len(versions))
+	}
+	if versions[0].GetName() != "velocity" || versions[0].GetVersion() != "1.2.3" {
+		t.Fatalf("agent version = %+v, want velocity 1.2.3", versions[0])
+	}
+}
+
+func TestLineageIncludesAFailureForEveryFailedAgent(t *testing.T) {
+	clients := healthy()
+	clients["geo"] = &fakeAgent{err: errors.New("down")}
+	sentinel := &fakeSentinel{}
+	c := coordinator(t, clients, sentinel)
+
+	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if len(lineage.GetFailures()) != 1 {
+		t.Fatalf("lineage failures = %d, want 1", len(lineage.GetFailures()))
+	}
+}
+
+func TestLineageIsRecordedEvenWhenNotReturnedInline(t *testing.T) {
+	// include_lineage is a server/gateway-level concern (whether it is
+	// attached to the response); the coordinator always builds and persists
+	// it, since replay and evaluation need every decision, not only the ones
+	// a caller asked to see inline.
+	sentinel := &fakeSentinel{}
+	c := coordinator(t, healthy(), sentinel)
+
+	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	if lineage == nil {
+		t.Fatal("Evaluate returned no lineage")
+	}
+	if len(c.lineage.(*fakeLineageStore).entries()) != 1 {
+		t.Fatal("lineage was returned but not persisted")
 	}
 }

@@ -77,7 +77,7 @@ flowchart TD
 
     subgraph state[Zone 5 · State · reachable only from Zone 2]
         fs[(Feature store<br/>Redis / Dragonfly)]
-        lin[[Decision lineage<br/>not built]]
+        lin[(Decision lineage<br/>PostgreSQL)]
     end
 
     client --> gw --> orch
@@ -92,15 +92,17 @@ flowchart TD
     orch -->|assembled evaluations| core
     core -->|DecisionOutcome| orch
     orch --> gw --> client
-    orch -.->|not built| lin
+    orch -->|writes lineage, off the hot path| lin
 ```
 
 Every signal returns to the orchestrator before the sentinel is called. The
 engines do not call the sentinel, the behavioural agent does not call the
 sentinel, and the sentinel writes nothing: it is a pure function of its request
-(§4), and Zone 2 is the only zone permitted to reach Zone 5. Lineage will
-therefore be written by the orchestrator, which is the only component both able
-to reach Zone 5 and in possession of the whole evaluation.
+(§4), and Zone 2 is the only zone permitted to reach Zone 5. Lineage is
+therefore written by the orchestrator, which is the only component both able
+to reach Zone 5 and in possession of the whole evaluation. The write happens
+after the sentinel has already answered, so a slow or unreachable lineage
+store degrades lineage, never the decision.
 
 | Component | Language | Owns | Explicitly does not own |
 |---|---|---|---|
@@ -285,10 +287,6 @@ benchmarks.
 Four gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:
 
-- **Nothing emits decision lineage.** `DecisionLineage` is defined in the
-  contract and constructed nowhere, and `GovernedVersions` is populated nowhere.
-  A decision made today cannot be reconstructed tomorrow, which also blocks
-  replay (ADR-013), evaluation and shadow mode (ADR-012).
 - **Nothing writes features.** The orchestrator reads the store; no ingest path
   populates it, so a deployed store stays empty and every evaluation sees
   absence rather than history.
@@ -297,6 +295,10 @@ easy to mistake for working:
 - **Transport is not secured.** Services speak plaintext gRPC between
   themselves, and callers authenticate with shared keys. mTLS and workload
   identity are Phase 4 (ADR-011).
+- **Lineage is written but nothing reads it back.** Every evaluation now
+  produces a `DecisionLineage` with populated `GovernedVersions`, persisted to
+  PostgreSQL and returned inline on request. That is what replay (ADR-013) and
+  shadow mode (ADR-012) require, but neither has been built yet to consume it.
 
 There is also no observability: no metrics and no tracing, so none of the
 behaviour above is currently visible in operation.

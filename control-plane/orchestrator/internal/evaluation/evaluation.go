@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/breaker"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
@@ -28,6 +29,12 @@ import (
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
+
+// contractVersion identifies the protobuf contract set recorded on every
+// lineage entry. It is a stand-in for real contract versioning: the contracts
+// have no automated version stamp yet, so this is a configured constant, not a
+// measured or generated one.
+const contractVersion = "v1"
 
 // AgentClient invokes one agent. It exists so that fan-out can be tested
 // without a network, and so that no transport detail leaks into coordination.
@@ -40,6 +47,14 @@ type SentinelClient interface {
 	Decide(ctx context.Context, in *dataplanev1.DecideRequest) (*dataplanev1.DecideResponse, error)
 }
 
+// LineageStore persists the DecisionLineage of a completed evaluation.
+//
+// It is consulted after the sentinel has already answered, so a slow or down
+// store degrades lineage, never the decision. See internal/lineage.
+type LineageStore interface {
+	Record(entry *riskv1.DecisionLineage)
+}
+
 // Coordinator runs evaluations against a configured agent set.
 type Coordinator struct {
 	registry *registry.Registry
@@ -47,6 +62,7 @@ type Coordinator struct {
 	breakers map[string]*breaker.Breaker
 	sentinel SentinelClient
 	store    features.Store
+	lineage  LineageStore
 	plan     budget.Plan
 	fallback time.Duration
 }
@@ -65,6 +81,9 @@ type Options struct {
 	// Store supplies the evidence agents reason over. The control plane holds
 	// the only connection to it; no agent has one (ADR-005).
 	Store features.Store
+
+	// Lineage persists every evaluation's DecisionLineage (ADR-007, ADR-013).
+	Lineage LineageStore
 
 	// Plan is the budget apportionment. Zero values take the documented default.
 	Plan budget.Plan
@@ -91,6 +110,9 @@ func New(options Options) (*Coordinator, error) {
 	if options.Store == nil {
 		return nil, status.Error(codes.FailedPrecondition, "evaluation: no feature store configured")
 	}
+	if options.Lineage == nil {
+		return nil, status.Error(codes.FailedPrecondition, "evaluation: no lineage store configured")
+	}
 
 	breakers := make(map[string]*breaker.Breaker)
 	for _, agent := range options.Registry.Agents() {
@@ -112,12 +134,14 @@ func New(options Options) (*Coordinator, error) {
 		breakers: breakers,
 		sentinel: options.Sentinel,
 		store:    options.Store,
+		lineage:  options.Lineage,
 		plan:     plan,
 		fallback: options.RequestDeadline,
 	}, nil
 }
 
-// Evaluate gathers signals for one subject and returns the sentinel's decision.
+// Evaluate gathers signals for one subject and returns the sentinel's
+// decision, plus the lineage recorded for it.
 //
 // It returns an error only when no decision can be produced within the
 // deadline. A dependency that fails is a degraded decision, not an error.
@@ -126,21 +150,29 @@ func (c *Coordinator) Evaluate(
 	evaluationID string,
 	subject *riskv1.Transaction,
 	policyID string,
-) (*riskv1.DecisionOutcome, error) {
-	featureSet := c.fetchFeatures(ctx, subject)
+) (*riskv1.DecisionOutcome, *riskv1.DecisionLineage, error) {
+	started := time.Now()
+	deadline := budget.Remaining(ctx, c.fallback)
 
-	evaluations := c.gather(ctx, evaluationID, subject, featureSet,
+	featureStarted := time.Now()
+	featureSet, featureWindow, featureFailure := c.fetchFeatures(ctx, subject)
+	featureElapsed := time.Since(featureStarted)
+
+	agentsStarted := time.Now()
+	evaluations, agentWindow := c.gather(ctx, evaluationID, subject, featureSet,
 		budget.Remaining(ctx, c.fallback))
+	agentsElapsed := time.Since(agentsStarted)
 
 	sentinelWindow, ok := c.plan.SentinelWindow(budget.Remaining(ctx, c.fallback))
 	if !ok {
-		return nil, status.Error(codes.DeadlineExceeded,
+		return nil, nil, status.Error(codes.DeadlineExceeded,
 			"evaluation: deadline expired before a decision could be produced")
 	}
 
 	decideCtx, cancel := context.WithTimeout(ctx, sentinelWindow)
 	defer cancel()
 
+	sentinelStarted := time.Now()
 	response, err := c.sentinel.Decide(decideCtx, &dataplanev1.DecideRequest{
 		EvaluationId:         evaluationID,
 		Subject:              subject,
@@ -149,15 +181,100 @@ func (c *Coordinator) Evaluate(
 		FeatureStoreDegraded: featureSet.GetDegraded(),
 		Budget:               durationpb.New(sentinelWindow),
 	})
+	sentinelElapsed := time.Since(sentinelStarted)
 	if err != nil {
-		return nil, status.Errorf(codes.Unavailable, "evaluation: sentinel unavailable: %v", err)
+		return nil, nil, status.Errorf(codes.Unavailable, "evaluation: sentinel unavailable: %v", err)
 	}
 
 	outcome := response.GetOutcome()
 	if outcome == nil {
-		return nil, status.Error(codes.Internal, "evaluation: sentinel returned no outcome")
+		return nil, nil, status.Error(codes.Internal, "evaluation: sentinel returned no outcome")
 	}
-	return outcome, nil
+
+	entry := c.buildLineage(lineageInput{
+		decisionID:     evaluationID,
+		subject:        subject,
+		decidedAt:      time.Now(),
+		outcome:        outcome,
+		evaluations:    evaluations,
+		featureSet:     featureSet,
+		featureFailure: featureFailure,
+		deadline:       deadline,
+		totalElapsed:   time.Since(started),
+		spans: []*riskv1.ExecutionSpan{
+			span("feature_fetch", featureElapsed, featureWindow),
+			span("deterministic_agents", agentsElapsed, agentWindow),
+			span("sentinel", sentinelElapsed, sentinelWindow),
+		},
+	})
+	c.lineage.Record(entry)
+
+	return outcome, entry, nil
+}
+
+// lineageInput collects everything gathered during one Evaluate call that the
+// lineage entry needs, so buildLineage stays a pure function of its input.
+type lineageInput struct {
+	decisionID     string
+	subject        *riskv1.Transaction
+	decidedAt      time.Time
+	outcome        *riskv1.DecisionOutcome
+	evaluations    []*riskv1.AgentEvaluation
+	featureSet     *riskv1.FeatureSet
+	featureFailure *commonv1.Failure
+	deadline       time.Duration
+	totalElapsed   time.Duration
+	spans          []*riskv1.ExecutionSpan
+}
+
+// buildLineage assembles the DecisionLineage for one evaluation.
+//
+// Model, prompt and output-schema versions are left unset: the behavioural
+// agent does not exist yet, and GovernedVersions documents them as present
+// only when it participates.
+func (c *Coordinator) buildLineage(in lineageInput) *riskv1.DecisionLineage {
+	failures := make([]*commonv1.Failure, 0, len(in.evaluations)+1)
+	if in.featureFailure != nil {
+		failures = append(failures, in.featureFailure)
+	}
+	agentVersions := make([]*commonv1.Version, 0, len(in.evaluations))
+	for _, evaluation := range in.evaluations {
+		if failure := evaluation.GetFailure(); failure != nil {
+			failures = append(failures, failure)
+		}
+		// A failed agent produced no signal, so no version is known for it;
+		// replay must treat a missing entry here as "not observed", not as
+		// evidence the agent was unversioned.
+		if version := evaluation.GetSignal().GetAgentVersion(); version != nil {
+			agentVersions = append(agentVersions, version)
+		}
+	}
+
+	return &riskv1.DecisionLineage{
+		DecisionId:    in.decisionID,
+		TransactionId: in.subject.GetId(),
+		DecidedAt:     timestamppb.New(in.decidedAt),
+		Outcome:       in.outcome,
+		Evaluations:   in.evaluations,
+		Versions: &riskv1.GovernedVersions{
+			Agents:           agentVersions,
+			Policy:           in.outcome.GetPolicy().GetVersion(),
+			FeatureCatalogue: &commonv1.Version{Name: "feature-catalogue", Version: in.featureSet.GetCatalogueVersion()},
+			Contract:         &commonv1.Version{Name: "legion-protocol", Version: contractVersion},
+		},
+		Spans:        in.spans,
+		Deadline:     durationpb.New(in.deadline),
+		TotalElapsed: durationpb.New(in.totalElapsed),
+		Failures:     failures,
+	}
+}
+
+func span(stage string, elapsed, allotted time.Duration) *riskv1.ExecutionSpan {
+	return &riskv1.ExecutionSpan{
+		Stage:   stage,
+		Elapsed: durationpb.New(elapsed),
+		Budget:  durationpb.New(allotted),
+	}
 }
 
 // fetchFeatures retrieves the evidence for one subject.
@@ -165,11 +282,13 @@ func (c *Coordinator) Evaluate(
 // It never returns an error. A store that cannot answer produces a feature set
 // in which every value is explicitly unavailable, because an agent must be able
 // to tell "there is nothing" from "I could not find out" — and because a
-// decision on degraded evidence is worth more than no decision.
+// decision on degraded evidence is worth more than no decision. The window
+// granted and, when the fetch itself failed, a Failure describing why are
+// both returned so the caller can record them in lineage.
 func (c *Coordinator) fetchFeatures(
 	ctx context.Context,
 	subject *riskv1.Transaction,
-) *riskv1.FeatureSet {
+) (*riskv1.FeatureSet, time.Duration, *commonv1.Failure) {
 	requests := features.Plan(subject)
 	set := &riskv1.FeatureSet{CatalogueVersion: features.CatalogueVersion}
 
@@ -177,7 +296,11 @@ func (c *Coordinator) fetchFeatures(
 	if !ok {
 		set.Features = features.Unavailable(requests)
 		set.Degraded = true
-		return set
+		return set, window, &commonv1.Failure{
+			Kind:      commonv1.FailureKind_FAILURE_KIND_DEADLINE_EXCEEDED,
+			Component: "feature-store",
+			Message:   "no budget remained to fetch features",
+		}
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, window)
@@ -187,12 +310,16 @@ func (c *Coordinator) fetchFeatures(
 	if err != nil {
 		set.Features = features.Unavailable(requests)
 		set.Degraded = true
-		return set
+		return set, window, &commonv1.Failure{
+			Kind:      commonv1.FailureKind_FAILURE_KIND_DEPENDENCY_UNAVAILABLE,
+			Component: "feature-store",
+			Message:   "feature store fetch failed",
+		}
 	}
 
 	set.Features = append(fetched, features.Derived(subject, time.Now())...)
 	set.Degraded = anyDegraded(set.Features)
-	return set
+	return set, window, nil
 }
 
 // anyDegraded reports whether the evaluation is working from imperfect
@@ -211,18 +338,19 @@ func anyDegraded(supplied []*riskv1.Feature) bool {
 
 // gather fans out to every registered agent in one shared window and collects
 // the results in agent-identifier order, independent of the order they arrive.
+// It also returns the window actually granted, for lineage spans.
 func (c *Coordinator) gather(
 	ctx context.Context,
 	evaluationID string,
 	subject *riskv1.Transaction,
 	supplied *riskv1.FeatureSet,
 	remaining time.Duration,
-) []*riskv1.AgentEvaluation {
+) ([]*riskv1.AgentEvaluation, time.Duration) {
 	agents := c.registry.Agents()
 
 	window, ok := c.plan.AgentWindow(remaining)
 	if !ok {
-		return exhausted(agents)
+		return exhausted(agents), 0
 	}
 
 	fanCtx, cancel := context.WithTimeout(ctx, window)
@@ -243,7 +371,7 @@ func (c *Coordinator) gather(
 	sort.Slice(results, func(i, j int) bool {
 		return results[i].GetAgentId() < results[j].GetAgentId()
 	})
-	return results
+	return results, window
 }
 
 func (c *Coordinator) invoke(

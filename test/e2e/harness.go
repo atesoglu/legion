@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -196,6 +197,65 @@ func (h *harness) startFeatureStore(history []storedFeature) string {
 	}
 	h.endpoints["feature-store"] = server.Addr()
 	return server.Addr()
+}
+
+// startLineageStore runs a real PostgreSQL container, so lineage persistence
+// is exercised exactly as it is in a deployment (ADR-007). Unlike the feature
+// store, there is no pure-Go in-process stand-in for Postgres; this is why
+// the suite reaches for Docker here and nowhere else.
+//
+// It skips loudly, in the same spirit as a missing Rust binary, when Docker
+// is not available or the image cannot be obtained.
+func (h *harness) startLineageStore() string {
+	h.t.Helper()
+
+	if _, err := exec.LookPath("docker"); err != nil {
+		h.t.Skip("docker is not available; skipping the lineage store")
+	}
+
+	port := freePort(h.t)
+	name := fmt.Sprintf("legion-e2e-lineage-%d", port)
+
+	run := exec.Command("docker", "run", "-d", "--rm",
+		"--name", name,
+		"-p", fmt.Sprintf("127.0.0.1:%d:5432", port),
+		"-e", "POSTGRES_PASSWORD=legion",
+		"-e", "POSTGRES_DB=legion",
+		"postgres:16-alpine")
+	if output, err := run.CombinedOutput(); err != nil {
+		h.t.Skipf("could not start a PostgreSQL container: %v\n%s", err, output)
+	}
+	h.t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+
+	dsn := fmt.Sprintf("postgres://postgres:legion@127.0.0.1:%d/legion?sslmode=disable", port)
+	waitForPostgres(h.t, dsn)
+	return dsn
+}
+
+// waitForPostgres blocks until dsn accepts a real connection. The container
+// port opens well before the server inside it accepts authenticated
+// connections, so a bare TCP dial (as waitReady does for the Go/Rust
+// binaries) is not enough here.
+func waitForPostgres(t *testing.T, dsn string) {
+	t.Helper()
+
+	deadline := time.Now().Add(readinessTimeout)
+	for {
+		pingCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		pool, err := pgxpool.New(pingCtx, dsn)
+		if err == nil {
+			err = pool.Ping(pingCtx)
+			pool.Close()
+		}
+		cancel()
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("lineage store at %s never became ready: %v", dsn, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // dial opens a client connection to an already-started service.

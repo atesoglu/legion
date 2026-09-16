@@ -34,6 +34,7 @@ import (
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/evaluation"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
+	"github.com/atesoglu/legion/control-plane/orchestrator/internal/lineage"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/registry"
 	"github.com/atesoglu/legion/internal/platform/config"
 	"github.com/atesoglu/legion/internal/platform/runtime"
@@ -47,6 +48,7 @@ const (
 	defaultAgentEndpoints  = "velocity=127.0.0.1:9300,device=127.0.0.1:9400,geo=127.0.0.1:9500"
 	defaultSentinelAddress = "127.0.0.1:9600"
 	defaultFeatureStore    = "127.0.0.1:6379"
+	defaultLineageStore    = "postgres://legion:legion@127.0.0.1:5432/legion?sslmode=disable"
 
 	// How long startup waits for dependencies to become reachable before
 	// serving anyway.
@@ -76,15 +78,19 @@ func (s *server) EvaluateTransaction(
 		return nil, status.Error(codes.Internal, "could not assign a decision identifier")
 	}
 
-	outcome, err := s.coordinator.Evaluate(ctx, decisionID, subject, request.GetOptions().GetPolicyId())
+	outcome, lineage, err := s.coordinator.Evaluate(ctx, decisionID, subject, request.GetOptions().GetPolicyId())
 	if err != nil {
 		return nil, err
 	}
 
-	return &gatewayv1.EvaluateTransactionResponse{
+	response := &gatewayv1.EvaluateTransactionResponse{
 		DecisionId: decisionID,
 		Outcome:    outcome,
-	}, nil
+	}
+	if request.GetOptions().GetIncludeLineage() {
+		response.Lineage = lineage
+	}
+	return response, nil
 }
 
 type agentClient struct{ client agentv1.AgentServiceClient }
@@ -148,11 +154,22 @@ func main() {
 		}
 	}()
 
+	// The lineage store is PostgreSQL (ADR-007): write-heavy, queried
+	// analytically, never read on the decision path. Like the feature store,
+	// a database that is down must not block startup; writes degrade instead.
+	lineageStore, err := lineage.NewPostgresStore(envOr("LEGION_LINEAGE_STORE", defaultLineageStore), log)
+	if err != nil {
+		log.Error("lineage store is not usable", "error", err)
+		os.Exit(1)
+	}
+	defer lineageStore.Close()
+
 	coordinator, err := evaluation.New(evaluation.Options{
 		Registry:        agents,
 		Clients:         clients,
 		Sentinel:        sentinelClient{client: dataplanev1.NewSentinelServiceClient(sentinelConn)},
 		Store:           features.NewRedisStore(redisClient),
+		Lineage:         lineageStore,
 		Plan:            budget.Default(),
 		RequestDeadline: cfg.RequestDeadline,
 		Breaker:         breaker.Default(),
