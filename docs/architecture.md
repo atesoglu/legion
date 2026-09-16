@@ -80,6 +80,13 @@ flowchart TD
         lin[(Decision lineage<br/>PostgreSQL)]
     end
 
+    subgraph investigation[Zone 6 · Investigation · Go · async, off the 80ms budget]
+        invctl[Investigation controller<br/>case creation · agent selection]
+        invq[[Task queue<br/>Redis Streams, separate instance]]
+        invwk[Generic worker<br/>loads agent · runs tools/model]
+        invdb[(Case, evidence & finding store<br/>PostgreSQL)]
+    end
+
     client --> gw --> orch
     orch --> fs
     orch --> vel & dev & geo
@@ -93,6 +100,12 @@ flowchart TD
     core -->|DecisionOutcome| orch
     orch --> gw --> client
     orch -->|writes lineage, off the hot path| lin
+    orch -.->|CaseTrigger on REVIEW, async| invctl
+    invctl --> invdb
+    invctl --> invq --> invwk
+    invwk --> invdb
+    invwk -->|only via| cap
+    invwk --> slm
 ```
 
 Every signal returns to the orchestrator before the sentinel is called. The
@@ -104,6 +117,13 @@ to reach Zone 5 and in possession of the whole evaluation. The write happens
 after the sentinel has already answered, so a slow or unreachable lineage
 store degrades lineage, never the decision.
 
+Zone 6 (ADR-017) is reached only through the same asynchronous path: the
+orchestrator never blocks on it, never learns whether a case was created, and
+the caller's `EvaluateTransactionResponse` never carries a `case_id`. A worker
+in Zone 6 reaches the capability runtime and the shared inference runtime
+exactly as the behavioural agent does — an investigation agent is not a
+second, looser trust boundary.
+
 | Component | Language | Owns | Explicitly does not own |
 |---|---|---|---|
 | Gateway | Go | Transport, authn/authz, request validation, rate limiting, deadline origin | Any risk logic |
@@ -113,6 +133,8 @@ store degrades lineage, never the decision.
 | Capability runtime | Go | Brokering every action an agent may take | Producing signals |
 | Behavioral agent | Go + SLM | Prompt construction, structured output validation, bounded signal | Decisions, unvalidated output |
 | Feature store | Redis / Dragonfly | Low-latency windowed aggregates | Truth of record |
+| Investigation controller | Go | Case creation, agent selection, finding aggregation (ADR-017) | Decisions, re-opening a `DecisionOutcome` |
+| Generic worker | Go | Executing one task: load agent, call tools/model, store findings | Deciding which agents run (that is the controller's job) |
 
 ## 4. Request flow
 
@@ -180,6 +202,7 @@ services.
 | `legion.agent.v1` | `Capability`, `AgentManifest`, `CapabilityAudit`, `AgentService`, `CapabilityService` |
 | `legion.dataplane.v1` | `SentinelService` |
 | `legion.gateway.v1` | `DecisionService` |
+| `legion.investigation.v1` | `Case`, `Investigation`, `Task`, `Evidence`, `AgentFinding`, `ToolExecution`, `AgentDefinition` (ADR-017, planned) |
 
 Structured JSON with a JSON Schema is used in exactly one place: the interface
 between the behavioural agent and the language model. That is a *model output
@@ -197,6 +220,7 @@ this kind usually go wrong quietly:
 
 - [Domain model](domain-model.md) — terminology and the risk-subject abstraction
 - [Decision model](decision-model.md) — scoring, weighting, policy, lineage
+- [Investigation model](investigation-model.md) — case management, task queue, agent registry, evidence
 - [Deadline model](deadline-model.md) — how 80 ms is divided and enforced
 - [Failure model](failure-model.md) — what happens when a dependency does not answer
 - [Capability model](capability-model.md) — what an agent is allowed to do
@@ -220,6 +244,9 @@ legion/
 │       ├── velocity/
 │       ├── device/
 │       └── geo/
+├── investigation/        Zone 6 · Go · async case management (ADR-017, planned)
+│   ├── controller/       case creation, agent selection, finding aggregation
+│   └── worker/           generic worker: loads an agent, runs its tools/model
 ├── crates/               Rust · shared libraries, no deployables
 │   ├── common/           value types with enforced invariants
 │   ├── platform/         config and process lifecycle
@@ -263,9 +290,11 @@ keeps one lockfile and — more importantly — one definition of the lint polic
 that forbids `unsafe` and denies `unwrap` on the decision path.
 
 Zone 4 will be `agents/`, holding the behavioural agent and the inference
-runtime. Directories from the long-term plan that have no implementation purpose
-yet are deliberately absent. Empty directories that promise work are worse than
-no directories.
+runtime. Zone 6 will be `investigation/` (ADR-017), holding the investigation
+controller and the generic worker — async, and never a dependency of the
+synchronous decision path. Directories from the long-term plan that have no
+implementation purpose yet are deliberately absent. Empty directories that
+promise work are worse than no directories.
 
 Directories from the long-term plan that have no implementation purpose yet —
 `inference/`, `feature-store/`, `simulator/`, `replay/`, `evaluation/`,
@@ -280,11 +309,11 @@ engines and the sentinel all run, and a transaction presented at the edge
 returns a decision.
 
 The following exist only as documented intent: the inference runtime, the
-behavioural agent, the capability runtime implementation, Kubernetes manifests,
-the fraud simulator, the replay engine, the evaluation framework and all
-benchmarks.
+behavioural agent, the capability runtime implementation, the investigation
+plane (Zone 6, ADR-017) in its entirety, Kubernetes manifests, the fraud
+simulator, the replay engine, the evaluation framework and all benchmarks.
 
-Four gaps inside the parts that do exist are worth naming, because each is
+Five gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:
 
 - **Nothing writes features.** The orchestrator reads the store; no ingest path
@@ -299,6 +328,13 @@ easy to mistake for working:
   produces a `DecisionLineage` with populated `GovernedVersions`, persisted to
   PostgreSQL and returned inline on request. That is what replay (ADR-013) and
   shadow mode (ADR-012) require, but neither has been built yet to consume it.
+  Its schema is also known to be wrong in one respect: ADR-020 supersedes the
+  denormalised shape this shipped with, and a migration is owed before Zone 6
+  or replay can query it directly.
+- **There is no transaction idempotency key.** A caller resubmitting an
+  identical transaction gets a second decision and a second lineage row.
+  ADR-021 specifies the fix; it is not implemented, and it blocks Zone 6 from
+  being safe to build on until it is, since case creation needs the same key.
 
 There is also no observability: no metrics and no tracing, so none of the
 behaviour above is currently visible in operation.

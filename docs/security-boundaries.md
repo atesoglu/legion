@@ -3,8 +3,9 @@
 Status: Phase 1. The Zone 0 boundary is enforced: callers authenticate, every
 field is validated, and an identifier that is not a pseudonym is rejected before
 it enters the platform. Everything between zones is still open — services speak
-plaintext gRPC and hold no workload identity. Capability enforcement is Phase 3;
-network, identity and workload hardening are Phase 4.
+plaintext gRPC and hold no workload identity. Capability enforcement is Phase 2
+(restructured, ADR-017); network, identity and workload hardening are Phase 4.
+Zone 6 (investigation, ADR-017) is documented intent only — nothing in it runs.
 
 ## 1. Trust zones
 
@@ -37,6 +38,12 @@ network, identity and workload hardening are Phase 4.
 ┌──────────────────────────────────────────▼──────────────────────┐
 │ Zone 5 — State                                                  │
 │ Feature store, lineage store. Reachable only from Zone 2.       │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │  async only; never a Zone 2 dependency
+┌───────────────────────────────▼─────────────────────────────────┐
+│ Zone 6 — Investigation (ADR-017, not built)                     │
+│ Case/investigation controller, generic workers, task queue.     │
+│ Same capability boundary as Zone 4. Off the 80 ms budget.       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -44,6 +51,12 @@ Zone 4 is the most interesting boundary. The behavioural agent and the model
 runtime process content that an adversary may have authored. They are therefore
 treated as *potentially adversarial themselves*, not merely as components that
 handle adversarial data.
+
+Zone 6 is reached only asynchronously, triggered by Zone 2's lineage writer
+when a decision is `REVIEW`. Zone 2 never waits on Zone 6 and never learns
+whether a case was created — the trigger is fire-and-forget by construction,
+not merely by convention, because nothing in Zone 2's request path holds a
+reference to anything in Zone 6.
 
 The same zones, with the components inside them and the calls between them, are
 drawn in [architecture §3](architecture.md#3-component-map).
@@ -60,6 +73,9 @@ drawn in [architecture §3](architecture.md#3-component-map).
 | Zone 4 → 5 | **Forbidden.** No direct path exists; network policy denies it |
 | Zone 4 → internet | **Forbidden.** No egress |
 | Zone 3 → anywhere | The sentinel makes no outbound calls at all |
+| Zone 2 → 6 | One direction, async: a `CaseTrigger` message, published by the lineage writer. Zone 2 holds no connection back into Zone 6 |
+| Zone 6 → 2 | Only via `CapabilityService`, exactly as Zone 4 — an investigation worker is not exempt from the capability boundary |
+| Zone 6 → 5 | **Forbidden**, same as Zone 4 — investigation state lives in its own Zone 6 store, never in the decision-path feature/lineage store |
 
 ## 3. What "zero trust" means here, and what it does not
 

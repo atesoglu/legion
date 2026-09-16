@@ -113,6 +113,26 @@ Two failure modes are unacceptable and are treated as defects:
 | Response | Reject with `INVALID_ARGUMENT`. No evaluation is started, no lineage beyond the rejection is emitted, no resources are consumed downstream. |
 | Reason code | None — this is not a risk outcome. |
 
+### Investigation plane (Zone 6) — specified, not yet built
+
+None of Zone 6 exists (ADR-017), so none of the following is implemented. It
+is recorded here, rather than only in `project-plan.md`, so that Phase 6 has
+a target to test against rather than a blank page when the plane exists:
+
+| Failure | Response |
+|---|---|
+| Worker crash mid-task | Lease expires; task is claimable by another worker; `attempt` increments (`investigation-model.md` §4). |
+| Task queue redelivery of a completed task | The task handler is idempotent; a duplicate delivery must not duplicate evidence, findings, or a case. |
+| Investigation Redis instance unavailable or slow | New tasks cannot be dispatched; already-`RUNNING` tasks continue independently since Postgres, not Redis, holds their state. Case/investigation status remains queryable throughout. |
+| Database unavailable during case/evidence/finding write | Do not acknowledge the queue message; the task remains claimable once the database recovers. |
+| Inference timeout or malformed response inside an investigation | Same posture as the real-time path's `MODEL_TIMEOUT`/`MODEL_OUTPUT_INVALID` (above), scoped to one task rather than one decision: the task fails or retries: the case is not blocked, since other tasks in the same investigation are independent. |
+| Malformed or duplicate task message | Rejected by the worker without executing any tool or model call; recorded as an `InvestigationAuditEvent`. |
+
+Crucially, **none of the above can affect a `DecisionOutcome`.** Zone 6 fails
+after the decision that created the case in question has already been made
+and returned; a failure here degrades investigation quality or timeliness,
+never a financial decision.
+
 ## 4. Fallback policy
 
 When the minimum included weight is not met, the fallback policy decides. It is
@@ -147,4 +167,5 @@ system whose measured detection quality does not apply.
 None of the above is believed until it is injected. Phase 6 exercises each row
 of §3 under load and asserts, for each: the decision produced, the degradation
 state, the reason codes, the observed latency, the breaker transitions and the
-emitted lineage. A documented failure mode without a test is an assumption.
+emitted lineage. A documented failure mode without a test is an assumption —
+the investigation-plane table above included, once Zone 6 exists to test.

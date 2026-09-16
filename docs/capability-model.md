@@ -1,8 +1,11 @@
 # Capability model
 
-Status: Phase 1. The contract exists (`legion/agent/v1/capability.proto`) and
-nothing yet enforces it: no capability broker runs, and no agent holds a
-credential to broker access to. The runtime is Phase 3.
+Status: Phase 2 (restructured; moved ahead of the behavioural agent, ADR-017).
+The contract exists (`legion/agent/v1/capability.proto`) and nothing yet
+enforces it: no capability broker runs, and no agent holds a credential to
+broker access to. This model governs Zone 6 investigation agents
+(ADR-017/018) as well as the behavioural agent — there is one enforcement
+mechanism, not one per zone.
 
 ## 1. Problem
 
@@ -88,6 +91,13 @@ Intended initial manifests:
 | Device | `GET_DEVICE_FEATURES`, `SUBMIT_EVALUATION` | Device feature names only |
 | Geo | `GET_GEO_FEATURES`, `SUBMIT_EVALUATION` | Geo feature names only |
 | Behavioral | `GET_TRANSACTION`, `GET_ACCOUNT_FEATURES`, `SUBMIT_EVALUATION` | Small named allow-list; low `max_invocations` |
+
+Investigation agents (Zone 6, ADR-017) are manifested the same way, except
+their grants are `allowed_tools` entries from `agent_definitions` (ADR-018)
+rather than a fixed capability enum member per feature family — a tool
+registry is a database of grantable verbs, which is exactly what this
+section already describes in the abstract. The enforcement order in §5 is
+unchanged; only the source of the manifest differs.
 
 The behavioural agent — the one with a language model in it — holds the
 narrowest useful set. It cannot read velocity, device or geo features directly;

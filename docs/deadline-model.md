@@ -18,6 +18,14 @@ per-component allowance. The number is currently unmeasured; see §7.
 The deadline is established once, at the gateway, and divided as the request
 descends. Every stage receives a *share of what remains*, never a fresh 80 ms.
 
+Investigation (Zone 6, ADR-017) is not a stage of this budget and never will
+be. It starts, if it starts at all, only after the sentinel has already
+answered and the caller has already received a response; it is asynchronous
+by construction, not merely by current implementation status. Nothing in this
+document changes, and nothing added for Zone 6 may add a synchronous call
+into it — see `investigation-model.md` §2 for why that boundary is treated as
+non-negotiable rather than an optimisation to revisit.
+
 ```text
 Client
   │  deadline = min(caller_requested, server_max = 80 ms)

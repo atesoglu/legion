@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-04
-**Phase:** 2
+**Phase:** 3 (restructured; now sequenced after the capability runtime, see ADR-017)
 
 ## Context
 

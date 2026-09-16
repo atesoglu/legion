@@ -34,7 +34,7 @@ to accommodate it.
 | **Device** | The endpoint that initiated the transaction. |
 | **Location** | A coarse geographic position with an explicit accuracy radius and an explicit source. |
 | **Merchant** | The acceptor of the transaction. |
-| **Evidence** | Any input to a signal: the subject itself, features, or model-derived observations. |
+| **Evidence** | Any input to a signal: the subject itself, features, or model-derived observations. **Note:** Zone 6 has a distinct, case-level `Evidence` entity (a gathered fact, independent of any agent's conclusion) — see [investigation-model.md](investigation-model.md) §3. The two are related in spirit, not the same type. |
 | **Feature** | A named, windowed, versioned aggregate derived from history. |
 | **Feature window** | The rolling interval a feature covers, from a closed set. |
 | **Freshness** | Whether a feature value is fresh, stale, absent or unavailable. These are four different things. |
@@ -187,7 +187,18 @@ engine must refuse to compare them.
 ## 7. Non-goals of the domain model
 
 Legion does not model the payment lifecycle beyond authorisation: no capture,
-settlement, chargeback or dispute. It does not model case management beyond
-emitting `REVIEW`. It does not model customers, only accounts. Each of these is
-a real system in a real bank, and none of them is needed to demonstrate that
-the decision path is sound.
+settlement, chargeback or dispute. It does not model customers, only accounts.
+Each of these is a real system in a real bank, and none of them is needed to
+demonstrate that the decision path is sound.
+
+Case management is **no longer** a non-goal, as of ADR-017. Phase 1's version
+of this document excluded it entirely ("does not model case management beyond
+emitting `REVIEW`"), which was the right boundary while nothing existed
+downstream of a decision. It is reversed because a real risk platform needs
+the other half — evidence gathering, specialised investigation agents, and an
+auditable conclusion — not because the original boundary was a mistake. See
+[investigation-model.md](investigation-model.md) for the domain objects this
+introduces (`Case`, `Investigation`, `Task`, `Evidence`, `AgentFinding`, and
+others), kept in a separate document because they belong to a different trust
+zone (Zone 6) and a different part of the risk-subject lifecycle: everything
+in *this* document ends at `Decision`; investigation begins there.

@@ -22,10 +22,10 @@ history.
 | [002](ADR-002-rust-for-deterministic-computation.md) | Rust for deterministic computation | Accepted | 0 |
 | [003](ADR-003-protobuf-grpc-contracts.md) | Protobuf and gRPC as authoritative contracts | Accepted | 0 |
 | [004](ADR-004-deterministic-decision-authority.md) | Deterministic final decision authority | Accepted | 0 |
-| [005](ADR-005-capability-based-agent-access.md) | Capability-based agent access | Accepted | 3 |
+| [005](ADR-005-capability-based-agent-access.md) | Capability-based agent access | Accepted | 2 |
 | [006](ADR-006-rust-data-plane-topology.md) | Rust data plane process topology | Accepted | 1 |
 | [007](ADR-007-feature-store.md) | Redis/Dragonfly as the feature store | Accepted | 1 |
-| [008](ADR-008-self-hosted-slm.md) | Self-hosted small language model | Accepted | 2 |
+| [008](ADR-008-self-hosted-slm.md) | Self-hosted small language model | Accepted | 3 |
 | [009](ADR-009-end-to-end-deadline.md) | An 80 ms end-to-end request deadline | Accepted | 1 |
 | [010](ADR-010-kubernetes-deployment.md) | Kubernetes as the deployment target | Accepted | 4 |
 | [011](ADR-011-zero-trust-network-model.md) | Zero-trust workload model | Accepted | 4 |
@@ -34,6 +34,11 @@ history.
 | [014](ADR-014-agent-set-is-configuration.md) | The agent set is configuration | Accepted | 1 |
 | [015](ADR-015-component-private-packages.md) | Component-private packages | Accepted | 1 |
 | [016](ADR-016-deployment-identity-and-packaging.md) | Deployment identity and packaging | Accepted | 4 |
+| [017](ADR-017-investigation-plane.md) | Investigation plane as Zone 6 | Accepted | 2 |
+| [018](ADR-018-agent-registry.md) | Postgres-backed agent registry | Accepted | 2 |
+| [019](ADR-019-investigation-task-queue.md) | Redis Streams as the investigation task queue | Accepted | 2 |
+| [020](ADR-020-normalised-lineage-schema.md) | Normalised reproducibility schema (supersedes commit `47edb19`) | Accepted | 2 |
+| [021](ADR-021-transaction-idempotency.md) | Transaction idempotency keys | Accepted | 2 |
 
 "Accepted" means the decision has been made and is binding on implementation.
 It does not mean the thing has been built; the phase column says when it is

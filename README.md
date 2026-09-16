@@ -88,12 +88,13 @@ explicit, observable outcome.
 | [Architecture](docs/architecture.md) | Components, language responsibilities, request flow, deployment shape |
 | [Domain model](docs/domain-model.md) | Terminology, agents, features, pseudonymisation |
 | [Decision model](docs/decision-model.md) | Scoring, weighting, thresholds, reason codes, lineage |
+| [Investigation model](docs/investigation-model.md) | Case management, task queue, agent registry, evidence, cost |
 | [Deadline model](docs/deadline-model.md) | Budget allocation, propagation, breakers vs deadlines |
 | [Failure model](docs/failure-model.md) | Defined behaviour for every dependency failure |
 | [Capability model](docs/capability-model.md) | What an agent may do, and how it is enforced |
 | [Security boundaries](docs/security-boundaries.md) | Trust zones, data handling, regulatory positioning |
-| [Threat model](docs/threat-model.md) | Thirteen threats with mitigation, detection and residual risk |
-| [ADRs](docs/adr/README.md) | Sixteen decisions with alternatives and trade-offs |
+| [Threat model](docs/threat-model.md) | Threats with mitigation, detection and residual risk |
+| [ADRs](docs/adr/README.md) | Twenty-one decisions with alternatives and trade-offs |
 | [Project plan](docs/project-plan.md) | The full specification and phase plan |
 
 ## Repository layout
@@ -105,6 +106,9 @@ control-plane/    Zone 2 · Go
 data-plane/       Zone 3 · Rust · four deployed processes
   sentinel/       aggregation, policy, decision authority
   engines/        velocity/ device/ geo/ — one process each
+investigation/    Zone 6 · Go · async case management, planned (ADR-017)
+  controller/     case creation, agent selection, finding aggregation
+  worker/         generic worker: loads an agent, runs its tools/model
 crates/           Rust · shared libraries
   common/         value types with enforced invariants
   engine/         feature reading and rule assessment
@@ -122,7 +126,10 @@ Component-private code lives under `<component>/internal/`, which makes a
 cross-component import of private code a compile error ([ADR-015](docs/adr/ADR-015-component-private-packages.md)).
 
 Directories for later phases are absent until they contain something. An empty
-directory that promises work is worse than no directory.
+directory that promises work is worse than no directory. `investigation/` is
+listed above because it is now an accepted decision (ADR-017), not because it
+exists yet — the same convention `agents/` already followed for the
+behavioural agent.
 
 ## Building
 
@@ -147,16 +154,20 @@ binaries have not been built.
 
 ## Phases
 
+Restructured 2026-09-16 to fold in an investigation/case-management scope
+(ADR-017 to ADR-021) and swap the original Phase 2/3 order — see
+[project-plan.md](docs/project-plan.md) §34 for the full reasoning.
+
 | Phase | Contents | Status |
 |---|---|---|
 | 0 | Architecture, contracts, threat model, ADRs | **Complete** |
-| 1 | Deterministic pipeline, feature store, pseudonymisation, cross-service tests | **Complete** |
-| 2 | Behavioural SLM agent, structured output, model governance | Not started |
-| 3 | Capability runtime and enforcement tests | Not started |
-| 4 | Kubernetes, zero trust, observability, autoscaling | Not started |
-| 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode | Not started |
-| 6 | Failure injection, adversarial scenarios, resilience measurement | Not started |
-| 7 | Benchmarks, results, portfolio release | Not started |
+| 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
+| 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | Not started |
+| 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
+| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | Not started |
+| 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |
+| 6 | Failure injection, adversarial scenarios, resilience measurement — decision path and investigation path | Not started |
+| 7 | Benchmarks, cost-per-investigation, results, portfolio release | Not started |
 
 Phase 1 delivers a system that is useful **without any AI**. That is a
 requirement, not a milestone, and it is now met.

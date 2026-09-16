@@ -38,7 +38,9 @@ of this shape, not actuarial estimates.
 | T-10 | Feature poisoning | High | Medium | Write path separation, bounded rules, anomaly detection |
 | T-11 | Malformed inference output | Medium | High | Strict validation, controlled rejection |
 | T-12 | Denial of service | High | Medium | Rate limiting, deadlines, breakers, load shedding |
-| T-13 | Replay attack | Medium | Medium | Idempotency keys, transaction-level deduplication |
+| T-13 | Replay attack | Medium | Medium | Idempotency keys (ADR-021, not implemented), transaction-level deduplication |
+| T-14 | Malicious or compromised investigation agent | High | Medium | Same capability boundary as T-01/T-02, extended to Zone 6 (ADR-017) |
+| T-15 | Cross-case data access | High | Medium | Per-task capability scoping, explicit cross-case access tests |
 
 ---
 
@@ -260,15 +262,75 @@ again to obtain a favourable outcome.
 
 - **Impact.** Medium.
 - **Likelihood.** Medium.
-- **Mitigation.** Transactions carry a pseudonymous identifier and
-  `occurred_at`; duplicates within a window are detectable rather than being
-  treated as new activity. Decisions are bound to a `decision_id` and a
-  transaction, so a decision cannot be presented for a different transaction.
-  Transport is mTLS, so network-level replay of the request is not available.
-- **Detection.** Duplicate-subject rate; decision reuse attempts.
+- **Mitigation.** **Not implemented.** ADR-021 specifies a caller-supplied
+  idempotency key, enforced at the gateway: a resubmission returns the
+  original decision rather than a new one, and a reused key against a
+  materially different body is rejected. Until it ships, `Transaction`
+  carries no de-duplication key and `decision_id` is generated fresh on every
+  call — resubmitting an identical transaction today produces a second
+  decision and a second lineage row. Transport is mTLS, so network-level
+  replay of the request itself is not available; this threat is about
+  application-level resubmission, which mTLS does not address.
+- **Detection.** Duplicate-subject rate; decision reuse attempts. Neither is
+  instrumented yet — see the observability gap in `architecture.md` §9.
 - **Residual risk.** Legion does not control the caller's use of its response.
   If the calling system does not bind a decision to the transaction it
-  requested, replay is possible outside Legion's boundary.
+  requested, replay is possible outside Legion's boundary. Once ADR-021 ships,
+  residual risk narrows to that boundary; today it also includes everything
+  inside Legion's own boundary.
+
+## T-14 — Malicious or compromised investigation agent
+
+An investigation agent (Zone 6, ADR-017) is deployed, modified, or
+compromised with the intent to fabricate evidence, suppress a finding, or
+exfiltrate data gathered during a case.
+
+- **Impact.** High. A fabricated or suppressed finding can misdirect a human
+  analyst's conclusion about a transaction already flagged as suspicious.
+- **Likelihood.** Medium — the same likelihood class as T-02, since an
+  investigation agent is architecturally the same shape as the behavioural
+  agent (a model-backed component reasoning over content it did not
+  originate), just running later and against richer context.
+- **Mitigation.** The same capability boundary as T-01/T-02, applied to Zone
+  6 (`investigation-model.md` §7): no ambient credentials, a closed tool
+  registry checked before every call, every invocation audited. An
+  investigation agent cannot alter a `Decision`, cannot write evidence
+  bypassing the evidence/finding distinction (§3 of `investigation-model.md`),
+  and its findings are always attributed and timestamped.
+- **Detection.** Tool-call audit trail; finding-to-evidence reference
+  completeness (a finding with no cited evidence is itself a signal);
+  per-agent confidence distribution monitored the same way per-agent score
+  distribution is monitored for T-01.
+- **Residual risk.** Same as T-02: the attacker still sees whatever the
+  agent's granted tools legitimately expose, for the cases it is activated
+  on. Capabilities bound scope, not sensitivity, in Zone 6 exactly as in
+  Zone 4.
+
+## T-15 — Cross-case data access
+
+A task, tool call or agent for one case reads or influences evidence,
+findings, or state belonging to a different case.
+
+- **Impact.** High. Case data is exactly the kind of thing a data-protection
+  regime treats as sensitive, and cross-case leakage is an incident whether
+  or not it was exploited maliciously.
+- **Likelihood.** Medium. A generic worker executes many different logical
+  agents against many different cases in sequence; a scoping bug is a
+  plausible defect class, not only a deliberate attack.
+- **Mitigation.** Every capability grant to a Zone 6 worker is scoped to one
+  `investigation_id`/`task_id`, exactly as Zone 4 capabilities are scoped to
+  one `evaluation_id` (`capability-model.md` §5). A tool call outside that
+  scope is `DENIED_SCOPE`. Task claims are per-worker and per-task; no worker
+  holds two tasks' contexts in the same authorised scope at once.
+- **Detection.** `DENIED_SCOPE` rate per agent; an agent that triggers this
+  routinely is either misconfigured or attempting enumeration.
+- **Residual risk.** A defect in how the controller constructs a task's
+  context (rather than in the capability check itself) could still hand a
+  worker the wrong case's data outright, upstream of any capability check.
+  This is a code-correctness risk the capability model does not reach by
+  itself; it is why the security acceptance tests in `project-plan.md` §51
+  include an explicit "agent accesses another case" test, not only a
+  capability-scope test.
 
 ---
 

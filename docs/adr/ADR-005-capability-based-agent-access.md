@@ -2,7 +2,7 @@
 
 **Status:** Accepted
 **Date:** 2026-09-04
-**Phase:** 3
+**Phase:** 2 (restructured; moved ahead of the behavioural SLM agent, see ADR-017)
 
 ## Context
 

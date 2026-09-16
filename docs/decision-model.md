@@ -172,9 +172,17 @@ guessed at.
 
 Lineage is recorded for every evaluation; nothing yet reads it back. Replay
 (ADR-013), the evaluation framework and shadow mode (ADR-012) are what
-consume a lineage dataset, and none of the three is built yet. Until one is,
-the reproducibility claim below is exercised only by
-`test/e2e`'s direct read of the stored rows, not by an actual replay run.
+consume a lineage dataset, and none of the three is built yet — nor is the
+investigation plane (Zone 6, ADR-017), which is triggered by the same
+asynchronous writer this section describes. Until one is, the reproducibility
+claim below is exercised only by `test/e2e`'s direct read of the stored rows,
+not by an actual replay run.
+
+The schema this was shipped with (one row, the whole `DecisionLineage`
+message marshalled into a `bytea` column, plus a handful of indexed columns)
+is superseded by ADR-020, which normalises it into per-concept tables so that
+Zone 6 and replay can query it directly rather than deserialising a blob per
+row. The migration is owed, not yet applied; see `architecture.md` §9.
 
 The reproducibility claim Legion makes is precise:
 

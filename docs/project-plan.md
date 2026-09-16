@@ -1120,6 +1120,10 @@ final_decision
 
 The project should demonstrate how this lineage can be used during an investigation.
 
+Shipped initially as one denormalised table (`decision_lineage`); ADR-020
+supersedes that shape with the normalised, queryable schema §49 and Zone 6
+(§45) depend on.
+
 ---
 
 # 30. Failure Injection
@@ -1231,6 +1235,10 @@ Legion/
 ├── agents/                   Zone 4
 │   └── behavioral/
 │
+├── investigation/             Zone 6 · Go · async, off the 80ms budget (ADR-017)
+│   ├── controller/
+│   └── worker/
+│
 ├── crates/                   Rust · shared libraries
 │   ├── common/
 │   ├── platform/
@@ -1307,6 +1315,16 @@ This is the target architecture, not a requirement to implement every directory 
 
 # 34. Development Phases
 
+Restructured 2026-09-16 to fold in the investigation/case-management scope
+of §45-51 below and the strengthened observability (§28) and failure-injection
+(§30) content that motivated it. The restructuring swaps the original Phase 2
+and Phase 3: the capability/tool runtime now exists before any model-backed
+agent runs, deterministic and investigation-side alike, rather than after only
+the behavioural agent's. See ADR-017 for why, and the "AFTER THAT" discussion
+that preceded it — the source material's own milestone order (tool registry
+before the first real agent, before the shared LLM) independently confirmed
+the same conclusion.
+
 ## Phase 0 — Architecture & Contracts
 
 Establish:
@@ -1321,6 +1339,8 @@ Establish:
 * repository structure.
 
 **No Kubernetes or LLM infrastructure is required yet.**
+
+**Status: Complete.**
 
 ---
 
@@ -1337,68 +1357,111 @@ Implement:
 * deterministic risk rules;
 * fallback engine;
 * synthetic transaction generator;
-* unit/integration tests.
+* unit/integration tests;
+* decision lineage, constructed and persisted (added after the initial
+  Phase 1 pass; see ADR-020 for the schema this now targets).
 
 Target:
 
 **A complete transaction → risk decision pipeline without LLM inference.**
 
+**Status: Complete.** Decision lineage ships to the schema described in
+`internal/lineage`; ADR-020 supersedes that schema's shape and the migration
+to it is Phase 2 work, not a Phase 1 regression.
+
 ---
 
-## Phase 2 — Behavioral SLM Agent
+## Phase 2 — Capability Runtime, Task Infrastructure & Case Management
+
+Restructured to absorb the original Phase 3 (capability runtime) and the
+investigation/case-management scope of §45-49, sequenced *before* the
+behavioural SLM agent (now Phase 3) so that the riskiest component — a
+model-backed agent — never runs without the enforcement boundary already in
+place (ADR-005, ADR-017).
 
 Implement:
 
-* model runtime;
+* transaction idempotency keys (ADR-021) — a prerequisite, not an
+  afterthought: case creation in this same phase needs the same key to avoid
+  duplicate cases;
+* restricted capability protocol, capability authorization, agent isolation,
+  resource mediation, capability audit trail, denial handling (the original
+  Phase 3 scope, moved here);
+* Postgres-backed agent registry (ADR-018), covering behavioural and
+  investigation agents — the three deterministic engines stay on the static
+  registry;
+* case creation on `REVIEW` (Zone 6, ADR-017), asynchronous, off the 80 ms
+  budget;
+* the investigation task queue (Redis Streams, ADR-019) and the generic
+  worker pool;
+* a rule-based investigation controller (§48) and at least one real
+  investigation agent (§45) exercised end to end, initially with a mocked
+  inference call so the whole loop — case, task, tool call, evidence,
+  finding, report — is proven before the shared model exists;
+* evidence and finding persistence, kept structurally distinct from each
+  other and from the decision itself (§16 of domain-model.md's investigation
+  entities, added alongside this restructuring).
+
+Target:
+
+**Agents — deterministic, investigation-side, and eventually behavioural —
+operate without direct access to infrastructure resources, and a `REVIEW`
+decision produces a real, auditable case.**
+
+---
+
+## Phase 3 — Behavioral SLM Agent & Shared Inference
+
+The original Phase 2 scope, now sequenced after Phase 2's capability runtime
+exists, so the model-backed agent is capability-bounded from its first
+invocation rather than retrofitted.
+
+Implement:
+
+* model runtime (self-hosted, ADR-008);
 * behavioral agent;
 * structured model output;
 * model timeout;
 * model fallback;
 * prompt versioning;
 * model metadata;
-* behavioral evaluation.
+* behavioral evaluation;
+* the shared inference runtime wired into the investigation workers from
+  Phase 2, replacing the mocked call.
 
 Target:
 
-**Hybrid deterministic + AI risk scoring.**
+**Hybrid deterministic + AI risk scoring, and investigation agents backed by
+the same shared model server.**
 
 ---
 
-## Phase 3 — Agent Capability Runtime
-
-Implement:
-
-* restricted capability protocol;
-* capability authorization;
-* agent isolation;
-* resource mediation;
-* capability audit trail;
-* denial handling.
-
-Target:
-
-**Agents can operate without direct access to infrastructure resources.**
-
----
-
-## Phase 4 — Kubernetes & Zero-Trust Deployment
+## Phase 4 — Kubernetes, Zero-Trust Deployment & Observability
 
 Implement:
 
 * Kubernetes manifests;
 * Helm;
 * network policies;
-* workload isolation;
+* workload isolation, extended to Zone 6;
 * secret management;
 * resource limits;
 * health probes;
-* KEDA;
-* observability;
-* failure injection.
+* KEDA, including worker autoscaling on investigation queue depth (§50);
+* **observability**, to the full depth specified in §28 and restated in
+  `investigation-model.md` §"Observability and cost": correlation identifiers
+  on every request (`request_id`, `trace_id`, `transaction_id`, `case_id`,
+  `investigation_id`, `task_id`, `agent_id`), structured JSON logs, the full
+  metrics list in §28 extended with the task/queue/LLM/tool metrics in
+  `investigation-model.md`, and OpenTelemetry spans covering the
+  investigation path (controller → task → worker → tool → LLM → finding) the
+  same way they cover the decision path.
 
 Target:
 
-**Self-hosted, isolated deployment on Hetzner.**
+**Self-hosted, isolated deployment on Hetzner, and an operator can trace any
+transaction end to end through both the decision and the investigation it may
+have opened.**
 
 ---
 
@@ -1412,29 +1475,44 @@ Implement:
 * benchmark suite;
 * statistical evaluation;
 * model comparison;
-* policy comparison.
+* policy comparison;
+* investigation-quality evaluation (§58's "agent quality" category: correct
+  evidence, correct interpretation, no fabricated evidence, valid structured
+  output, appropriate tool usage), extended to the investigation agents added
+  in Phase 2/3.
 
 Target:
 
-**Reproducible evidence that the system works.**
+**Reproducible evidence that the system works, for both the decision and the
+investigation it may open.**
 
 ---
 
 ## Phase 6 — Adversarial & Resilience Engineering
 
-Implement:
+Implement, to the full depth specified in §30 and `failure-model.md`:
 
 * adaptive fraud scenarios;
-* chaos/failure testing;
+* chaos/failure testing, **including the investigation plane specifically**:
+  worker crash mid-task, task-queue redelivery of an already-completed task,
+  the investigation Redis instance unavailable or slow, database failure
+  during case/evidence write, inference timeout and malformed response inside
+  an investigation (as distinct from inside the real-time decision, which
+  Phase 1 already covers), and a malformed or duplicate task message;
 * model degradation tests;
 * latency attacks;
-* queue saturation;
-* capability abuse tests;
+* queue saturation, for both the deterministic decision path (already
+  covered) and the investigation task queue (new);
+* capability abuse tests, extended to investigation-side tool calls
+  (unauthorised tool, arbitrary SQL, shell execution, arbitrary HTTP,
+  cross-case data access — §60's security acceptance tests, folded in here
+  rather than treated as a separate category);
 * recovery testing.
 
 Target:
 
-**Demonstrate that Legion remains safe under hostile and degraded conditions.**
+**Demonstrate that Legion remains safe under hostile and degraded conditions,
+across both the decision path and the investigation path.**
 
 ---
 
@@ -1452,7 +1530,8 @@ Produce:
 * deployment documentation;
 * security documentation;
 * engineering decision records;
-* benchmark methodology;
+* benchmark methodology, including cost-per-investigation (§41's cost
+  targets, restated in `investigation-model.md`);
 * known limitations;
 * "What Didn't Work" documentation.
 
@@ -1661,6 +1740,11 @@ ADR-007: Why consolidated Rust data-plane agents?
 ADR-008: Why Redis/Dragonfly?
 ADR-009: Why Kubernetes?
 ADR-010: Why the 80ms deadline?
+ADR-017: Why an investigation plane, and why it is asynchronous?
+ADR-018: Why a Postgres-backed agent registry, separate from the static one?
+ADR-019: Why Redis Streams, and why a separate instance from the feature store?
+ADR-020: Why normalise the lineage schema, and why supersede rather than edit it?
+ADR-021: Why transaction idempotency keys, and why at the gateway?
 ```
 
 Each ADR should document:
@@ -1739,7 +1823,7 @@ The insurance domain must not be implemented until the payment-risk architecture
 
 # 44. Final Architectural Philosophy
 
-Legion follows five core rules:
+Legion follows six core rules:
 
 ```text
 1. Deterministic code owns financial decisions.
@@ -1751,6 +1835,8 @@ Legion follows five core rules:
 4. Go orchestrates; Rust computes.
 
 5. Every important claim is backed by measurable evidence.
+
+6. Investigation is asynchronous and never borrows from the decision's budget.
 ```
 
 The project should deliberately favor **simple, explainable, benchmarked engineering over unnecessary complexity**.
@@ -1760,3 +1846,328 @@ The goal is not to build the largest possible system.
 The goal is to build a system sophisticated enough that an experienced financial-services engineer can inspect it and say:
 
 > **"This person understands the constraints."**
+
+---
+
+# 45. Investigation Architecture
+
+Added 2026-09-16 (ADR-017). A `REVIEW` decision is not the end of the
+transaction's story; it is the point at which Legion hands off from
+deterministic real-time scoring to asynchronous, evidence-based investigation.
+
+```text
+DecisionOutcome.decision == REVIEW
+        │
+        ▼  (async: lineage writer publishes CaseTrigger, ADR-017/019)
+   Case created
+        │
+        ▼
+   Investigation started
+        │
+        ▼
+   Investigation Controller
+        │
+        │  signal analysis → agent selection (rule-based initially)
+        ▼
+   Task(s) created ──► Redis Streams (investigation.tasks, ADR-019)
+        │
+        ▼
+   Generic Worker
+        │
+        │  load agent definition (ADR-018) → check tool authorization (ADR-005)
+        │  → execute tool(s) → call shared inference (Phase 3) → validate output
+        ▼
+   Evidence + Agent Finding persisted
+        │
+        ▼
+   Controller aggregates findings ──► additional agents if warranted
+        │
+        ▼
+   Investigation Result / Case Summary
+```
+
+This is explicitly the same shape as the source material's investigation
+loop (transaction → controller → task queue → worker → tool/LLM → findings →
+evidence → result), translated to Go and to Legion's trust-zone model. The one
+structural deviation, and the one that matters most, is that **nothing in this
+diagram is on the caller's critical path.** `EvaluateTransactionResponse`
+returns as soon as the sentinel answers; everything below the first arrow
+happens after the caller has already received `REVIEW` and moved on.
+
+## 45.1 Agent activation strategy
+
+Not every registered investigation agent runs for every case. The initial
+strategy is rule-based, mirroring the source material directly:
+
+```text
+if device_risk_signal > threshold:
+    activate("device_investigation_agent")
+
+if velocity_risk_signal > threshold:
+    activate("velocity_investigation_agent")
+
+if relationship_signal_present:
+    activate("relationship_investigation_agent")
+```
+
+A case with unremarkable signals might activate one agent; a case with several
+concurrent signals might activate five. No case activates every registered
+agent — this is what makes "hundreds or thousands of logical agents" a
+property the architecture can actually hold, rather than a claim that only
+survives at small N. The controller does not decide the case; it decides what
+gets *looked at*.
+
+## 45.2 Task lifecycle
+
+```text
+PENDING → RUNNING → COMPLETED
+             │
+             ├──► WAITING (needs a follow-up tool call or agent)
+             │
+             └──► lease expiry / crash
+                       │
+                       ▼
+                   RETRYING → PENDING
+                       │
+                 max_attempts exceeded
+                       │
+                       ▼
+                     FAILED → DEAD_LETTER
+```
+
+The database (not the queue) is the source of truth for this state machine,
+per ADR-019. A worker transitions a task to `RUNNING` in Postgres before doing
+any work, so a crash between claiming a task and finishing it is visible and
+recoverable rather than silently lost.
+
+## 45.3 What the controller is not
+
+The investigation controller selects agents and aggregates findings. It has
+no `Decision` type available to it, cannot alter `decisions.decision`, and its
+"recommendation" is a field on the case a human or a downstream process may
+act on — never an automatic re-authorization or reversal of the original
+outcome. This is the same authority boundary ADR-004 draws for the sentinel,
+restated for a component several steps further downstream.
+
+---
+
+# 46. Investigation Domain Objects
+
+These extend the entities in `domain-model.md`, scoped to Zone 6 and
+introduced by ADR-017:
+
+```text
+Case                — one per transaction that reached REVIEW (or was
+                       explicitly escalated); tracks status and priority.
+Investigation       — one attempt at investigating a Case; a case may have
+                       more than one over time (re-opened, escalated).
+Task                — one agent invocation within an investigation.
+AgentDefinition      — a registered logical agent (ADR-018): prompt, allowed
+                       tools, model policy, version, enabled.
+ToolExecution        — one tool call a worker made on an agent's behalf, with
+                       arguments, result, status and duration — complete
+                       auditability of what a worker actually did.
+Evidence             — a fact gathered during investigation, independent of
+                       any agent's interpretation of it.
+AgentFinding         — one agent's observation, hypothesis and confidence,
+                       referencing the Evidence it is based on.
+InvestigationAuditEvent — an append-only record of what happened, when, to
+                       what, for the same reason `audit_events` exists in the
+                       source material: TASK_CREATED, TASK_COMPLETED,
+                       TOOL_CALLED, AGENT_COMPLETED, ANALYST_DECISION, etc.
+```
+
+The distinction the source material draws is adopted exactly as stated,
+because it is correct and Legion has no better version of it:
+
+```text
+Evidence  ≠  Observation  ≠  Hypothesis  ≠  Final decision
+```
+
+Evidence is what was gathered. An observation is what an agent noticed in it.
+A hypothesis is what an agent concluded from the observation. None of the
+three is the decision, and the decision was already made, deterministically,
+before any of this ran.
+
+## 46.1 Case states
+
+```text
+OPEN → INVESTIGATING → WAITING → COMPLETED
+                              → ESCALATED
+                              → CLOSED
+```
+
+Case creation is idempotent on `(idempotency_key)` (ADR-021): the queue's own
+at-least-once delivery (ADR-019) must not be able to open two cases for one
+transaction.
+
+---
+
+# 47. Agent Registry (Postgres-backed)
+
+ADR-018's schema, restated here alongside the other domain objects:
+
+```text
+agent_definitions
+    agent_id, version, name, description, system_prompt,
+    allowed_tools (jsonb), model_policy (jsonb), configuration (jsonb),
+    enabled, created_at
+    UNIQUE(agent_id, version)
+```
+
+Registering an agent does not require deploying anything: it is a row plus a
+worker image capable of interpreting `agent_id`'s tool and model policy. The
+three deterministic Rust engines are **not** in this table — see ADR-018 for
+why they stay on the static, startup-parsed registry from Phase 1.
+
+The rollout sequence for a new investigation agent mirrors the one ADR-014
+already established for the real-time agents, applied here:
+
+| # | Step | Affects investigation outcomes? |
+|---|---|---|
+| 1 | Register at `enabled = false` | No |
+| 2 | Deploy the worker capability the agent needs (tools, model policy) | No |
+| 3 | Enable in shadow: runs, findings recorded, not surfaced to analysts | No |
+| 4 | Compare shadow findings against analyst-labelled outcomes | No |
+| 5 | Enable for real | **Yes** |
+
+---
+
+# 48. Task Queue and Worker Model
+
+ADR-019's mechanism, restated operationally:
+
+```text
+Investigation Controller
+        │  publish
+        ▼
+  investigation.tasks  (Redis Streams, separate instance from the
+                         feature store's Redis)
+        │  consumer group
+        ▼
+  Generic Worker (any number, horizontally scaled on queue depth)
+        │
+        │  READ → CLAIM → LOAD AGENT → LOAD CONTEXT → EXECUTE TOOLS
+        │  → CALL LLM (Phase 3+) → VALIDATE OUTPUT → STORE FINDINGS
+        │  → MARK COMPLETE
+        ▼
+  Postgres (source of truth for task state)
+```
+
+A worker is generic: it does not know in advance which logical agent it will
+execute next. It loads that from `agent_definitions` (§47) per task. This is
+the mechanism that makes "many logical agents, few processes" true rather
+than aspirational — the number of workers is an autoscaling decision (Phase 4,
+KEDA on queue depth), independent of how many agents are registered.
+
+---
+
+# 49. Evidence, Findings and Investigation Result
+
+An investigation's output is a report, not a decision:
+
+```json
+{
+  "case_id": "uuid",
+  "risk_signals": ["SHARED_DEVICE", "HIGH_VELOCITY"],
+  "evidence_count": 8,
+  "findings_count": 4,
+  "investigation_status": "COMPLETED"
+}
+```
+
+Findings reference the evidence they are based on (`evidence_ids`), never the
+other way around — evidence must be able to exist and be queried without a
+finding ever having been drawn from it, so an analyst can always ask "what was
+actually observed" independent of what any agent concluded from it.
+
+---
+
+# 50. Observability and Cost (Phase 4 addendum)
+
+Everything in this section is Phase 4 scope (§28, §34) — recorded here in
+full because it originates from the source material and must not be lost
+between now and Phase 4, not because it changes when Phase 4 happens.
+
+**Correlation identifiers**, present on every investigation-path request:
+`request_id`, `trace_id`, `transaction_id`, `case_id`, `investigation_id`,
+`task_id`, `agent_id` — extending the decision-path tracing §28 already
+specifies.
+
+**Metrics**, additive to §28's list:
+
+```text
+cases_created_total
+investigations_total
+
+tasks_created_total
+tasks_completed_total
+tasks_failed_total
+tasks_retried_total
+
+queue_depth
+worker_active_tasks
+
+llm_requests_total
+llm_latency_ms
+llm_tokens_total
+
+tool_calls_total
+tool_latency_ms
+```
+
+**Cost is a first-class metric, not an afterthought.** The system must be
+able to answer, per investigation:
+
+```text
+LLM tokens / investigation
+LLM cost / investigation
+compute cost / 1,000 transactions
+database cost
+worker cost
+GPU utilisation
+```
+
+This is worth stating explicitly because Legion has never had a component
+with a variable per-invocation cost before — the deterministic engines and
+the sentinel cost a fixed amount of CPU time regardless of what they decide.
+An investigation's cost depends on how many agents it activated and how much
+each one made the model do, which is a genuinely new kind of thing to measure.
+
+---
+
+# 51. Testing Taxonomy (adopted from the source material)
+
+Extends §36 with the six-category taxonomy, because it is a clearer
+organisation than §36's language/layer-based one and both are worth having:
+
+```text
+Functional      — transaction processing, scoring, decision, case creation,
+                   agent execution, tool execution, investigation completion.
+
+Reliability     — retry, timeout, worker crash, duplicate task, database
+                   failure, LLM failure. (Phase 6, folded into §30.)
+
+Security        — unauthorized tool, invalid agent permission, invalid API
+                   credentials, data isolation, cross-case access. (Phase 6.)
+
+Performance     — TPS, latency, concurrent investigations, queue depth, LLM
+                   concurrency. (Phase 7, folded into §31.)
+
+Reproducibility — same transaction, same feature snapshot, same model, same
+                   rules, same policy → same score/decision. (Phase 5, §22.)
+
+Agent quality   — correct evidence, correct interpretation, no fabricated
+                   evidence, valid structured output, appropriate tool usage.
+                   (Phase 5, new — Legion has no prior category for grading
+                   what an agent concluded, only what it was allowed to do.)
+```
+
+The critical end-to-end acceptance test the source material specifies (a
+transaction with high device risk and high velocity, traced all the way
+through case creation, agent activation, task execution, evidence, findings
+and investigation completion, with every version recorded) is adopted as
+Legion's own Phase 2/3 acceptance test, extending `test/e2e`'s existing
+"starts the real binaries and speaks gRPC to them" posture to the
+investigation plane once it exists.
+
