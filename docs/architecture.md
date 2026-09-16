@@ -77,7 +77,7 @@ flowchart TD
 
     subgraph state[Zone 5 · State · reachable only from Zone 2]
         fs[(Feature store<br/>Redis / Dragonfly)]
-        lin[[Decision lineage]]
+        lin[[Decision lineage<br/>not built]]
     end
 
     client --> gw --> orch
@@ -92,14 +92,15 @@ flowchart TD
     orch -->|assembled evaluations| core
     core -->|DecisionOutcome| orch
     orch --> gw --> client
-    orch --> lin
+    orch -.->|not built| lin
 ```
 
 Every signal returns to the orchestrator before the sentinel is called. The
 engines do not call the sentinel, the behavioural agent does not call the
 sentinel, and the sentinel writes nothing: it is a pure function of its request
-(§4), and Zone 2 is the only zone permitted to reach Zone 5. Lineage is
-therefore written by the orchestrator.
+(§4), and Zone 2 is the only zone permitted to reach Zone 5. Lineage will
+therefore be written by the orchestrator, which is the only component both able
+to reach Zone 5 and in possession of the whole evaluation.
 
 | Component | Language | Owns | Explicitly does not own |
 |---|---|---|---|
@@ -281,9 +282,13 @@ behavioural agent, the capability runtime implementation, Kubernetes manifests,
 the fraud simulator, the replay engine, the evaluation framework and all
 benchmarks.
 
-Three gaps inside the parts that do exist are worth naming, because each is
+Four gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:
 
+- **Nothing emits decision lineage.** `DecisionLineage` is defined in the
+  contract and constructed nowhere, and `GovernedVersions` is populated nowhere.
+  A decision made today cannot be reconstructed tomorrow, which also blocks
+  replay (ADR-013), evaluation and shadow mode (ADR-012).
 - **Nothing writes features.** The orchestrator reads the store; no ingest path
   populates it, so a deployed store stays empty and every evaluation sees
   absence rather than history.
@@ -292,6 +297,9 @@ easy to mistake for working:
 - **Transport is not secured.** Services speak plaintext gRPC between
   themselves, and callers authenticate with shared keys. mTLS and workload
   identity are Phase 4 (ADR-011).
+
+There is also no observability: no metrics and no tracing, so none of the
+behaviour above is currently visible in operation.
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made.

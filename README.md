@@ -24,6 +24,7 @@ them.
 | Decision path | Gateway → orchestrator → velocity, device, geo → sentinel |
 | Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
+| Decision lineage | Contract only; **nothing emits it**, so decisions are not yet reproducible |
 | Behavioural agent, capability runtime, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
@@ -59,6 +60,9 @@ Rust Sentinel ──── normalise → weight → aggregate → apply policy
     ▼
 ALLOW / REVIEW / DECLINE + reason codes + decision lineage
 ```
+
+The behavioural agent and decision lineage are not built. Everything else in
+that diagram runs today.
 
 Three design commitments shape everything else:
 

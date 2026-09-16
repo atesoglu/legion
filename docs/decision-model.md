@@ -154,10 +154,16 @@ the reason.
 
 ## 7. Lineage and reproducibility
 
-Every evaluation emits a `DecisionLineage` containing the decision, every agent
-evaluation (successful or not), the timing of each stage against its budget,
-observed failures, and `GovernedVersions` — the pinned versions of the agents,
-policy, feature catalogue, model, prompt, output schema and contract set.
+**Not yet implemented.** `DecisionLineage` exists in the contract and nothing
+constructs it, so a decision made today cannot be reconstructed tomorrow. This
+section describes the intent; until it is built, the reproducibility claim below
+is a design commitment rather than a property of the running system.
+
+Every evaluation will emit a `DecisionLineage` containing the decision, every
+agent evaluation (successful or not), the timing of each stage against its
+budget, observed failures, and `GovernedVersions` — the pinned versions of the
+agents, policy, feature catalogue, model, prompt, output schema and contract
+set.
 
 The reproducibility claim Legion makes is precise:
 
