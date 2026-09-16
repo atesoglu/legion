@@ -15,11 +15,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"os"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
@@ -28,6 +30,7 @@ import (
 
 	"github.com/atesoglu/legion/gateway/internal/auth"
 	"github.com/atesoglu/legion/gateway/internal/deadline"
+	"github.com/atesoglu/legion/gateway/internal/dedup"
 	"github.com/atesoglu/legion/gateway/internal/ratelimit"
 	"github.com/atesoglu/legion/gateway/internal/validation"
 	"github.com/atesoglu/legion/internal/platform/config"
@@ -39,6 +42,11 @@ const (
 	defaultListenAddress       = ":9100"
 	defaultOrchestratorAddress = "127.0.0.1:9200"
 
+	// defaultDedupStore deliberately differs from the feature store's default
+	// port: ADR-019/ADR-017 require a separate Redis instance, never a shared
+	// one, so an outage or compromise of one cannot touch the other.
+	defaultDedupStore = "127.0.0.1:6380"
+
 	warmupTimeout = 5 * time.Second
 	callerIdleTTL = time.Hour
 	sweepInterval = 5 * time.Minute
@@ -49,6 +57,7 @@ type server struct {
 
 	authenticator *auth.Authenticator
 	limiter       *ratelimit.Limiter
+	dedup         *dedup.Store
 	orchestrator  gatewayv1.DecisionServiceClient
 	maxDeadline   time.Duration
 	log           *slog.Logger
@@ -74,6 +83,17 @@ func (s *server) EvaluateTransaction(
 		return nil, err
 	}
 
+	transaction := request.GetTransaction()
+	idempotencyKey := transaction.GetIdempotencyKey()
+
+	cached, found, err := s.dedup.Claim(ctx, caller.ID, idempotencyKey, transaction)
+	if err != nil {
+		return nil, s.translateDedup(caller, err)
+	}
+	if found {
+		return cached, nil
+	}
+
 	// The gateway is the only origin of the request deadline. A caller may ask
 	// for less; it can never ask for more.
 	forwardCtx, cancel := deadline.Establish(
@@ -82,9 +102,34 @@ func (s *server) EvaluateTransaction(
 
 	response, err := s.orchestrator.EvaluateTransaction(forwardCtx, request)
 	if err != nil {
+		// The claim must not outlive an evaluation that never happened, or a
+		// legitimate retry would wait out the full retention window for nothing.
+		if releaseErr := s.dedup.Release(context.WithoutCancel(ctx), caller.ID, idempotencyKey); releaseErr != nil {
+			s.log.Warn("dedup release failed", "caller", caller.ID, "error", releaseErr.Error())
+		}
 		return nil, s.translate(caller, err)
 	}
+
+	if storeErr := s.dedup.Store(context.WithoutCancel(ctx), caller.ID, idempotencyKey, transaction, response); storeErr != nil {
+		s.log.Warn("dedup store failed", "caller", caller.ID, "error", storeErr.Error())
+	}
 	return response, nil
+}
+
+// translateDedup maps a dedup failure to the status a caller should act on.
+// A store outage fails closed: silently skipping deduplication once Zone 6
+// depends on the same key (ADR-017) would risk a duplicate case, which is a
+// worse failure than an evaluation the caller must retry.
+func (s *server) translateDedup(caller auth.Caller, err error) error {
+	switch {
+	case errors.Is(err, dedup.ErrConflict):
+		return status.Error(codes.InvalidArgument, "idempotency_key already used with a different transaction")
+	case errors.Is(err, dedup.ErrInFlight):
+		return status.Error(codes.Aborted, "duplicate request is already being evaluated, retry")
+	default:
+		s.log.Warn("idempotency check failed", "caller", caller.ID, "error", err.Error())
+		return status.Error(codes.Unavailable, "idempotency check unavailable")
+	}
 }
 
 // translate keeps internal failure detail inside the trust boundary. Zone 0
@@ -138,6 +183,19 @@ func main() {
 
 	limiter := ratelimit.New(ratelimit.Default())
 
+	// A separate Redis instance from the feature/lineage stores (ADR-019,
+	// ADR-017's isolation reasoning applied here too). Down at startup is not
+	// fatal: the first request to need it fails closed with Unavailable
+	// instead of the whole process refusing to start.
+	dedupClient := redis.NewClient(&redis.Options{
+		Addr: envOr("LEGION_IDEMPOTENCY_STORE", defaultDedupStore),
+	})
+	defer func() {
+		if err := dedupClient.Close(); err != nil {
+			log.Warn("idempotency store close failed", "error", err)
+		}
+	}()
+
 	listener, err := net.Listen("tcp", cfg.ListenAddress)
 	if err != nil {
 		log.Error("listen failed", "error", err)
@@ -148,6 +206,7 @@ func main() {
 	gatewayv1.RegisterDecisionServiceServer(grpcServer, &server{
 		authenticator: authenticator,
 		limiter:       limiter,
+		dedup:         dedup.New(dedupClient),
 		orchestrator:  gatewayv1.NewDecisionServiceClient(conn),
 		maxDeadline:   cfg.RequestDeadline,
 		log:           log,

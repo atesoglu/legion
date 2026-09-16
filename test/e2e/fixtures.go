@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -41,13 +43,19 @@ func pseudonym(value string, domain commonv1.IdentifierDomain) *commonv1.Pseudon
 // The occurrence time is now rather than a fixed instant: the gateway refuses
 // transactions older than a day, because velocity windows are computed against
 // this timestamp and a stale one produces a meaningless evaluation.
+//
+// The idempotency key is fresh on every call rather than a fixed fixture
+// constant: two unrelated test cases building "an ordinary transaction" must
+// never collide at the gateway's dedup store (ADR-019) and be mistaken for a
+// resubmission of one another.
 func transaction() *riskv1.Transaction {
 	return &riskv1.Transaction{
-		Id:         pseudonym(fixtureTxn, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_TRANSACTION),
-		OccurredAt: timestamppb.New(time.Now()),
-		Type:       riskv1.TransactionType_TRANSACTION_TYPE_PURCHASE,
-		Channel:    riskv1.Channel_CHANNEL_ECOMMERCE,
-		Amount:     &commonv1.Money{CurrencyCode: "EUR", MinorUnits: 4_250},
+		Id:             pseudonym(fixtureTxn, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_TRANSACTION),
+		OccurredAt:     timestamppb.New(time.Now()),
+		Type:           riskv1.TransactionType_TRANSACTION_TYPE_PURCHASE,
+		Channel:        riskv1.Channel_CHANNEL_ECOMMERCE,
+		Amount:         &commonv1.Money{CurrencyCode: "EUR", MinorUnits: 4_250},
+		IdempotencyKey: freshIdempotencyKey(),
 		Account: &riskv1.Account{
 			Id:              pseudonym(fixtureAccount, commonv1.IdentifierDomain_IDENTIFIER_DOMAIN_ACCOUNT),
 			OpenedAt:        timestamppb.New(time.Now().Add(-90 * 24 * time.Hour)),
@@ -78,6 +86,17 @@ func compromisedDevice() *riskv1.Transaction {
 	subject := transaction()
 	subject.Device.IntegrityCompromised = true
 	return subject
+}
+
+// freshIdempotencyKey returns a caller-assigned key unique enough that no two
+// fixture transactions in the same test run collide at the gateway's dedup
+// store, without pretending to model how a real caller would derive one.
+func freshIdempotencyKey() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		panic(fmt.Sprintf("fixtures: could not generate an idempotency key: %v", err))
+	}
+	return hex.EncodeToString(raw)
 }
 
 // Seeding the feature store.

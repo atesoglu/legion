@@ -313,7 +313,7 @@ behavioural agent, the capability runtime implementation, the investigation
 plane (Zone 6, ADR-017) in its entirety, Kubernetes manifests, the fraud
 simulator, the replay engine, the evaluation framework and all benchmarks.
 
-Five gaps inside the parts that do exist are worth naming, because each is
+Four gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:
 
 - **Nothing writes features.** The orchestrator reads the store; no ingest path
@@ -331,10 +331,14 @@ easy to mistake for working:
   Its schema is also known to be wrong in one respect: ADR-018 supersedes the
   denormalised shape this shipped with, and a migration is owed before Zone 6
   or replay can query it directly.
-- **There is no transaction idempotency key.** A caller resubmitting an
-  identical transaction gets a second decision and a second lineage row.
-  ADR-019 specifies the fix; it is not implemented, and it blocks Zone 6 from
-  being safe to build on until it is, since case creation needs the same key.
+
+One gap this list used to carry has closed: **transaction idempotency**
+(ADR-019) is now implemented. `Transaction.idempotency_key` is required, and
+the gateway deduplicates on `(caller, idempotency_key)` against a Redis store
+separate from the feature store. A resubmission with the same key and body
+returns the original response; a reused key with a different body is
+rejected. Case creation (Zone 6) can build on this key from its first version
+instead of needing a retrofit.
 
 There is also no observability: no metrics and no tracing, so none of the
 behaviour above is currently visible in operation.

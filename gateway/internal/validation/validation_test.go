@@ -49,6 +49,7 @@ func valid() *gatewayv1.EvaluateTransactionRequest {
 				CategoryCode: "5411",
 				CountryCode:  "DE",
 			},
+			IdempotencyKey: "caller-assigned-key-1",
 		},
 	}
 }
@@ -119,6 +120,9 @@ func TestRequiredFieldsAreRequired(t *testing.T) {
 		"type":          func(r *gatewayv1.EvaluateTransactionRequest) { r.Transaction.Type = 0 },
 		"channel":       func(r *gatewayv1.EvaluateTransactionRequest) { r.Transaction.Channel = 0 },
 		"currency_code": func(r *gatewayv1.EvaluateTransactionRequest) { r.Transaction.Amount.CurrencyCode = "" },
+		"idempotency_key": func(r *gatewayv1.EvaluateTransactionRequest) {
+			r.Transaction.IdempotencyKey = ""
+		},
 	}
 
 	for name, break_ := range cases {
@@ -163,6 +167,15 @@ func TestUnboundedStringsAreRefused(t *testing.T) {
 
 	if err := Request(request, now); err == nil {
 		t.Fatal("an unbounded segment was accepted")
+	}
+}
+
+func TestAnUnboundedIdempotencyKeyIsRefused(t *testing.T) {
+	request := valid()
+	request.Transaction.IdempotencyKey = strings.Repeat("a", MaxIdempotencyKeyLength+1)
+
+	if err := Request(request, now); err == nil {
+		t.Fatal("an unbounded idempotency key was accepted")
 	}
 }
 

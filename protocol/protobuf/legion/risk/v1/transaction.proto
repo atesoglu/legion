@@ -191,4 +191,9 @@ message Transaction {
 
   // Payer- or merchant-supplied free text. Optional and always untrusted.
   repeated UntrustedText annotations = 12;
+
+  // Caller-assigned identifier for this transaction, unique per caller.
+  // Required. Resubmission with the same key and caller returns the
+  // original decision rather than producing a new one; see ADR-019.
+  string idempotency_key = 13;
 }

@@ -199,6 +199,18 @@ func (h *harness) startFeatureStore(history []storedFeature) string {
 	return server.Addr()
 }
 
+// startDedupStore runs a second, independent in-process Redis for the
+// gateway's idempotency dedup store (ADR-019). It is a separate instance from
+// the feature store on purpose, the same isolation ADR-017 argues for the
+// task queue: nothing shares state between them.
+func (h *harness) startDedupStore() string {
+	h.t.Helper()
+
+	server := miniredis.RunT(h.t)
+	h.endpoints["dedup-store"] = server.Addr()
+	return server.Addr()
+}
+
 // startLineageStore runs a real PostgreSQL container, so lineage persistence
 // is exercised exactly as it is in a deployment (ADR-007). Unlike the feature
 // store, there is no pure-Go in-process stand-in for Postgres; this is why

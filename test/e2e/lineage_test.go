@@ -25,6 +25,7 @@ func startPipelineWithLineage(t *testing.T, history []storedFeature) (*harness, 
 	// startPipeline would build a second harness; the lineage store must be
 	// part of the same one so its container is cleaned up alongside the rest.
 	store := h.startFeatureStore(history)
+	dedupStore := h.startDedupStore()
 	sentinel := h.startRust("legion-sentinel", "sentinel")
 	velocity := h.startRust("legion-velocity", "velocity")
 	device := h.startRust("legion-device", "device")
@@ -40,6 +41,7 @@ func startPipelineWithLineage(t *testing.T, history []storedFeature) (*harness, 
 	h.startGo("gateway", "gateway", []string{
 		"LEGION_ORCHESTRATOR_ENDPOINT=" + orchestrator,
 		"LEGION_API_KEYS=e2e-caller=" + apiKey,
+		"LEGION_IDEMPOTENCY_STORE=" + dedupStore,
 	})
 
 	h.waitReady()

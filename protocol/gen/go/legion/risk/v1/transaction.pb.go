@@ -859,9 +859,13 @@ type Transaction struct {
 	Merchant       *Merchant              `protobuf:"bytes,10,opt,name=merchant,proto3" json:"merchant,omitempty"`
 	Authentication *AuthenticationContext `protobuf:"bytes,11,opt,name=authentication,proto3" json:"authentication,omitempty"`
 	// Payer- or merchant-supplied free text. Optional and always untrusted.
-	Annotations   []*UntrustedText `protobuf:"bytes,12,rep,name=annotations,proto3" json:"annotations,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Annotations []*UntrustedText `protobuf:"bytes,12,rep,name=annotations,proto3" json:"annotations,omitempty"`
+	// Caller-assigned identifier for this transaction, unique per caller.
+	// Required. Resubmission with the same key and caller returns the
+	// original decision rather than producing a new one; see ADR-019.
+	IdempotencyKey string `protobuf:"bytes,13,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Transaction) Reset() {
@@ -978,6 +982,13 @@ func (x *Transaction) GetAnnotations() []*UntrustedText {
 	return nil
 }
 
+func (x *Transaction) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
 var File_legion_risk_v1_transaction_proto protoreflect.FileDescriptor
 
 const file_legion_risk_v1_transaction_proto_rawDesc = "" +
@@ -1018,7 +1029,7 @@ const file_legion_risk_v1_transaction_proto_rawDesc = "" +
 	"\x11exemption_applied\x18\x03 \x01(\bR\x10exemptionApplied\"=\n" +
 	"\rUntrustedText\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\tR\x05value\x12\x16\n" +
-	"\x06source\x18\x02 \x01(\tR\x06source\"\xb0\x05\n" +
+	"\x06source\x18\x02 \x01(\tR\x06source\"\xd9\x05\n" +
 	"\vTransaction\x120\n" +
 	"\x02id\x18\x01 \x01(\v2 .legion.common.v1.PseudonymousIdR\x02id\x12;\n" +
 	"\voccurred_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -1035,7 +1046,8 @@ const file_legion_risk_v1_transaction_proto_rawDesc = "" +
 	"\bmerchant\x18\n" +
 	" \x01(\v2\x18.legion.risk.v1.MerchantR\bmerchant\x12M\n" +
 	"\x0eauthentication\x18\v \x01(\v2%.legion.risk.v1.AuthenticationContextR\x0eauthentication\x12?\n" +
-	"\vannotations\x18\f \x03(\v2\x1d.legion.risk.v1.UntrustedTextR\vannotations*\xbd\x01\n" +
+	"\vannotations\x18\f \x03(\v2\x1d.legion.risk.v1.UntrustedTextR\vannotations\x12'\n" +
+	"\x0fidempotency_key\x18\r \x01(\tR\x0eidempotencyKey*\xbd\x01\n" +
 	"\aChannel\x12\x17\n" +
 	"\x13CHANNEL_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14CHANNEL_CARD_PRESENT\x10\x01\x12\x15\n" +

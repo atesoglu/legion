@@ -30,6 +30,7 @@ func startPipeline(t *testing.T, history []storedFeature, extraEnv ...string) *h
 
 	h := newHarness(t)
 	store := h.startFeatureStore(history)
+	dedupStore := h.startDedupStore()
 	sentinel := h.startRust("legion-sentinel", "sentinel")
 	velocity := h.startRust("legion-velocity", "velocity")
 	device := h.startRust("legion-device", "device")
@@ -44,6 +45,7 @@ func startPipeline(t *testing.T, history []storedFeature, extraEnv ...string) *h
 	h.startGo("gateway", "gateway", []string{
 		"LEGION_ORCHESTRATOR_ENDPOINT=" + orchestrator,
 		"LEGION_API_KEYS=e2e-caller=" + apiKey,
+		"LEGION_IDEMPOTENCY_STORE=" + dedupStore,
 	})
 
 	h.waitReady()

@@ -46,9 +46,9 @@ Enforcement:
 2. `(caller_id, idempotency_key)` is the deduplication key. The same key from
    two different callers is not a collision; the same caller resubmitting the
    same key is.
-3. A resubmission within a bounded retention window (proposed: 24 hours,
-   matching the gateway's existing "transaction older than a day is refused"
-   rule already implied by velocity-window semantics) returns the **original**
+3. A resubmission within a bounded retention window (24 hours, matching the
+   gateway's existing "transaction older than a day is refused" rule already
+   implied by velocity-window semantics) returns the **original**
    `EvaluateTransactionResponse`, not a fresh evaluation. It is not an error;
    a retry after a dropped response must succeed exactly like the first
    attempt from the caller's point of view.
@@ -87,11 +87,22 @@ will not set until they are debugging a production incident, at which point
 it is too late to matter. Required-and-validated is what makes the guarantee
 real.
 
+**Ship with a migration window (accept-but-warn before enforce).** Rejected.
+That concern only has weight once real, already-integrated callers exist
+against Phase 1's contract; today the only caller is `test/e2e`'s own
+fixtures. Building a warn-then-enforce path now means shipping and later
+deleting logic that no real caller will ever exercise — pure carrying cost
+for a migration that is not happening. The field is required and enforced
+from its first version; a migration window is revisited if and when a real
+external caller integrates before this ships (see Revisit if).
+
 ## Trade-offs
 
-- **A new required field is a breaking contract change** for any caller
-  already integrated against Phase 1's `EvaluateTransactionRequest`. It ships
-  with a migration window (accept-but-warn before enforce), not a flag day.
+- **A new required field is additive at the wire level** (proto3 allows
+  adding a field without breaking existing binaries), but it is a **contract
+  change at the semantic level**: a request that omits it is rejected. With
+  no real caller integrated yet, there is nothing to migrate, so this ships
+  as a flag day, not a phased rollout.
 - **The gateway needs a dedup store** (small, bounded-retention — Redis with
   a TTL is the natural fit, reusing operational familiarity from the feature
   store without sharing its instance, for the same isolation reason ADR-017
@@ -106,9 +117,10 @@ real.
 
 - `threat-model.md` T-13's mitigation moves from "planned" to "specified
   here"; it remains unimplemented until this ADR's Phase lands.
-- `EvaluateTransactionRequest`/`Transaction`'s contract changes, which is a
-  `buf breaking` — surfaced concern; the migration window above exists
-  specifically to satisfy it.
+- `EvaluateTransactionRequest`/`Transaction`'s contract changes; the field is
+  additive at the wire level, so `buf breaking` is not a concern, but every
+  caller must supply it from the first deployed version — there is no
+  grace period.
 - Zone 6 case creation (ADR-017) is idempotent by construction from its
   first version, rather than needing a retrofit once duplicate cases are
   observed in the wild.
@@ -119,3 +131,7 @@ real.
   example, a caller with no natural request identifier of its own) — in which
   case a gateway-issued idempotency token, exchanged before the real request,
   is the fallback, at the cost of an extra round trip.
+- A real external caller integrates against the unenforced field before this
+  ships — in which case the accept-but-warn migration window rejected above
+  becomes the right call after all, and should be added back rather than
+  assumed away.

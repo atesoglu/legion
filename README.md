@@ -20,7 +20,7 @@ them.
 | | |
 |---|---|
 | Contracts | Defined, compiling, linted |
-| Documentation | Architecture, domain, decision, deadline, failure, capability, security, threat model, 16 ADRs |
+| Documentation | Architecture, domain, decision, deadline, failure, capability, security, threat model, 19 ADRs |
 | Decision path | Gateway → orchestrator → velocity, device, geo → sentinel |
 | Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
@@ -94,7 +94,7 @@ explicit, observable outcome.
 | [Capability model](docs/capability-model.md) | What an agent may do, and how it is enforced |
 | [Security boundaries](docs/security-boundaries.md) | Trust zones, data handling, regulatory positioning |
 | [Threat model](docs/threat-model.md) | Threats with mitigation, detection and residual risk |
-| [ADRs](docs/adr/README.md) | Twenty-one decisions with alternatives and trade-offs |
+| [ADRs](docs/adr/README.md) | Nineteen decisions with alternatives and trade-offs |
 | [Project plan](docs/project-plan.md) | The full specification and phase plan |
 
 ## Repository layout
@@ -162,7 +162,7 @@ Restructured 2026-09-16 to fold in an investigation/case-management scope
 |---|---|---|
 | 0 | Architecture, contracts, threat model, ADRs | **Complete** |
 | 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
-| 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | Not started |
+| 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | In progress — transaction idempotency (ADR-019) shipped |
 | 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
 | 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | Not started |
 | 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |

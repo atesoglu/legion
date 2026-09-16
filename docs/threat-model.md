@@ -38,7 +38,7 @@ of this shape, not actuarial estimates.
 | T-10 | Feature poisoning | High | Medium | Write path separation, bounded rules, anomaly detection |
 | T-11 | Malformed inference output | Medium | High | Strict validation, controlled rejection |
 | T-12 | Denial of service | High | Medium | Rate limiting, deadlines, breakers, load shedding |
-| T-13 | Replay attack | Medium | Medium | Idempotency keys (ADR-019, not implemented), transaction-level deduplication |
+| T-13 | Replay attack | Medium | Medium | Idempotency keys (ADR-019, implemented at the gateway), transaction-level deduplication |
 | T-14 | Malicious or compromised investigation agent | High | Medium | Same capability boundary as T-01/T-02, extended to Zone 6 (ADR-017) |
 | T-15 | Cross-case data access | High | Medium | Per-task capability scoping, explicit cross-case access tests |
 
@@ -262,22 +262,30 @@ again to obtain a favourable outcome.
 
 - **Impact.** Medium.
 - **Likelihood.** Medium.
-- **Mitigation.** **Not implemented.** ADR-019 specifies a caller-supplied
-  idempotency key, enforced at the gateway: a resubmission returns the
-  original decision rather than a new one, and a reused key against a
-  materially different body is rejected. Until it ships, `Transaction`
-  carries no de-duplication key and `decision_id` is generated fresh on every
-  call — resubmitting an identical transaction today produces a second
-  decision and a second lineage row. Transport is mTLS, so network-level
-  replay of the request itself is not available; this threat is about
-  application-level resubmission, which mTLS does not address.
+- **Mitigation.** **Implemented.** `Transaction.idempotency_key` (ADR-019) is
+  required and enforced at the gateway: `(caller, idempotency_key)` is the
+  dedup key, held in a Redis store separate from the feature store, retained
+  for 24 hours. A resubmission with the same key and the same transaction
+  body returns the original `EvaluateTransactionResponse` rather than a new
+  evaluation; a resubmission with the same key and a materially different
+  body is rejected with `INVALID_ARGUMENT`. This mitigates application-level
+  resubmission specifically. It does not depend on transport security: today
+  transport is plaintext gRPC with shared-key caller authentication (mTLS is
+  Phase 4, ADR-011), so a network-level replay of the request is still
+  possible up to the transport boundary — it would simply be recognised and
+  collapsed by this same dedup key on arrival, not silently re-evaluated.
+  Not yet covered: the dedup store's own availability is not measured, and a
+  concurrent (rather than sequential) identical resubmission that arrives
+  before the first has stored its result returns `ABORTED` rather than the
+  eventual answer, which is a caller-visible gap worth revisiting if it
+  proves to matter in practice.
 - **Detection.** Duplicate-subject rate; decision reuse attempts. Neither is
   instrumented yet — see the observability gap in `architecture.md` §9.
 - **Residual risk.** Legion does not control the caller's use of its response.
   If the calling system does not bind a decision to the transaction it
-  requested, replay is possible outside Legion's boundary. Once ADR-019 ships,
-  residual risk narrows to that boundary; today it also includes everything
-  inside Legion's own boundary.
+  requested, replay is possible outside Legion's boundary. That boundary is
+  now the full extent of the residual risk; it no longer also includes
+  resubmission inside Legion's own boundary.
 
 ## T-14 — Malicious or compromised investigation agent
 

@@ -36,6 +36,9 @@ const (
 	MaxAnnotations        = 8
 	MaxAnnotationLength   = 512
 	MaxKeyVersionLength   = 32
+
+	// MaxIdempotencyKeyLength bounds ADR-019's caller-assigned dedup key.
+	MaxIdempotencyKeyLength = 128
 )
 
 // ClockSkew is how far into the future an occurrence timestamp may sit.
@@ -109,7 +112,20 @@ func transaction(subject *riskv1.Transaction, now time.Time) error {
 	if err := merchant(subject.GetMerchant()); err != nil {
 		return err
 	}
-	return annotations(subject.GetAnnotations())
+	if err := annotations(subject.GetAnnotations()); err != nil {
+		return err
+	}
+	return idempotencyKey(subject.GetIdempotencyKey())
+}
+
+// idempotencyKey enforces ADR-019: the field is required from its first
+// version, with no accept-but-warn migration window, since the only caller
+// today is test/e2e's own fixtures.
+func idempotencyKey(key string) error {
+	if key == "" {
+		return invalid("transaction.idempotency_key is required")
+	}
+	return bounded(key, MaxIdempotencyKeyLength, "transaction.idempotency_key")
 }
 
 // pseudonym is the boundary that keeps cardholder data out of the platform.
