@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -17,7 +18,17 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/atesoglu/legion/internal/platform/migrate"
 )
+
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// migrationsTable is private to the investigation schema (ADR-017): lineage
+// (ADR-018) and investigation may share a Postgres instance, and each
+// schema's migration history must not collide with the other's.
+const migrationsTable = "schema_migrations_investigation"
 
 // Task, investigation and case statuses. Plain strings rather than the
 // proto enum's String() form (which carries a "TASK_STATUS_" prefix): these
@@ -48,99 +59,10 @@ var terminalTaskStates = map[string]bool{
 // consumer's loop rather than leaking a goroutine on it forever.
 const writeTimeout = 5 * time.Second
 
-// schema is applied once at startup, the same idempotent-DDL posture
-// internal/lineage uses (no migration tool exists yet, Phase 1/2 scope).
-const schema = `
-CREATE TABLE IF NOT EXISTS agent_definitions (
-	agent_id      TEXT NOT NULL,
-	version       TEXT NOT NULL,
-	name          TEXT NOT NULL,
-	description   TEXT NOT NULL DEFAULT '',
-	system_prompt TEXT NOT NULL DEFAULT '',
-	allowed_tools JSONB NOT NULL DEFAULT '[]',
-	model_policy  JSONB NOT NULL DEFAULT '{}',
-	configuration JSONB NOT NULL DEFAULT '{}',
-	enabled       BOOLEAN NOT NULL DEFAULT FALSE,
-	created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-	PRIMARY KEY (agent_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS cases (
-	case_id         TEXT PRIMARY KEY,
-	decision_id     TEXT NOT NULL,
-	transaction_id  TEXT NOT NULL,
-	idempotency_key TEXT NOT NULL UNIQUE,
-	status          TEXT NOT NULL,
-	priority        INT NOT NULL DEFAULT 0,
-	created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS investigations (
-	investigation_id    TEXT PRIMARY KEY,
-	case_id             TEXT NOT NULL REFERENCES cases(case_id),
-	status              TEXT NOT NULL,
-	activated_agent_ids JSONB NOT NULL DEFAULT '[]',
-	created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-	completed_at        TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS investigations_case_id_idx ON investigations (case_id);
-
-CREATE TABLE IF NOT EXISTS tasks (
-	task_id          TEXT PRIMARY KEY,
-	investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
-	agent_id         TEXT NOT NULL,
-	status           TEXT NOT NULL,
-	attempt          INT NOT NULL DEFAULT 0,
-	max_attempts     INT NOT NULL DEFAULT 3,
-	created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-	updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS tasks_investigation_id_idx ON tasks (investigation_id);
-
-CREATE TABLE IF NOT EXISTS evidence (
-	evidence_id      TEXT PRIMARY KEY,
-	investigation_id TEXT NOT NULL REFERENCES investigations(investigation_id),
-	source           TEXT NOT NULL,
-	content          JSONB NOT NULL DEFAULT '{}',
-	collected_at     TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS agent_findings (
-	finding_id   TEXT PRIMARY KEY,
-	task_id      TEXT NOT NULL REFERENCES tasks(task_id),
-	agent_id     TEXT NOT NULL,
-	evidence_ids JSONB NOT NULL DEFAULT '[]',
-	observation  TEXT NOT NULL,
-	hypothesis   TEXT NOT NULL,
-	confidence   INT NOT NULL,
-	created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS tool_executions (
-	tool_execution_id TEXT PRIMARY KEY,
-	task_id           TEXT NOT NULL REFERENCES tasks(task_id),
-	tool_name         TEXT NOT NULL,
-	arguments         JSONB NOT NULL DEFAULT '{}',
-	result            JSONB NOT NULL DEFAULT '{}',
-	status            TEXT NOT NULL,
-	duration_ms       BIGINT NOT NULL DEFAULT 0,
-	executed_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS investigation_audit_events (
-	event_id    TEXT PRIMARY KEY,
-	case_id     TEXT NOT NULL,
-	event_type  TEXT NOT NULL,
-	detail      JSONB NOT NULL DEFAULT '{}',
-	occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS investigation_audit_events_case_id_idx ON investigation_audit_events (case_id);
-`
-
 // Store is the Postgres-backed persistence for Zone 6.
 type Store struct {
 	pool *pgxpool.Pool
+	dsn  string
 }
 
 // Open connects without verifying reachability: like every other Legion
@@ -150,16 +72,15 @@ func Open(dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{pool: pool}, nil
+	return &Store{pool: pool, dsn: dsn}, nil
 }
 
-// ApplySchema applies the idempotent DDL. Call it once at startup; a failure
-// here means every operation below will fail until it can be applied.
-func (s *Store) ApplySchema(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
-	defer cancel()
-	_, err := s.pool.Exec(ctx, schema)
-	return err
+// ApplyMigrations applies every pending migration (ADR-018 retires the
+// informal idempotent-DDL approach this used to be; investigation adopts
+// the same real migration tool lineage does). Call it once at startup; a
+// failure here means every operation below will fail until it succeeds.
+func (s *Store) ApplyMigrations() error {
+	return migrate.Run(migrationsFS, s.dsn, migrationsTable)
 }
 
 // Close releases the pool.

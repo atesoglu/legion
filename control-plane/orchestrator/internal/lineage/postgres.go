@@ -2,38 +2,35 @@ package lineage
 
 import (
 	"context"
+	"embed"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/atesoglu/legion/internal/platform/migrate"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
-// writeTimeout bounds a single lineage write or schema statement, so a slow or
+//go:embed migrations/*.sql
+var migrationsFS embed.FS
+
+// migrationsTable is private to the lineage schema (ADR-018): lineage and
+// investigation (ADR-017) may share a Postgres instance, and each schema's
+// migration history must not collide with the other's.
+const migrationsTable = "schema_migrations_lineage"
+
+// writeTimeout bounds a single lineage write or migration run, so a slow or
 // unreachable database degrades lineage rather than leaking goroutines.
 const writeTimeout = 5 * time.Second
 
-// schema is applied once at startup. There is no migration tool yet (Phase 1
-// scope); this idempotent DDL is the whole of it, and it is intentionally
-// small: the table stores the marshalled DecisionLineage as the source of
-// truth, plus the columns an analytical query needs without deserialising it.
-const schema = `
-CREATE TABLE IF NOT EXISTS decision_lineage (
-	decision_id    TEXT PRIMARY KEY,
-	transaction_id TEXT NOT NULL,
-	decided_at     TIMESTAMPTZ NOT NULL,
-	decision       TEXT NOT NULL,
-	shadow         BOOLEAN NOT NULL,
-	lineage        BYTEA NOT NULL
-);
-CREATE INDEX IF NOT EXISTS decision_lineage_decided_at_idx ON decision_lineage (decided_at);
-`
-
-// PostgresStore is the Store used in every deployment. See ADR-007.
+// PostgresStore is the Store used in every deployment. See ADR-007 and
+// ADR-018 (the normalised schema this writes into).
 type PostgresStore struct {
 	pool  *pgxpool.Pool
+	dsn   string
 	queue chan *riskv1.DecisionLineage
 	done  chan struct{}
 	log   *slog.Logger
@@ -42,10 +39,10 @@ type PostgresStore struct {
 // NewPostgresStore opens a connection pool and starts the background writer.
 //
 // It does not verify connectivity, the same posture the feature store takes:
-// a database that is down must not block startup. Schema application and
-// every write are attempted from the background writer instead, and a
-// failure there is logged, not raised, because lineage is diagnostic and must
-// never become a reason a decision fails.
+// a database that is down must not block startup. Migration and every write
+// are attempted from the background writer instead, and a failure there is
+// logged, not raised, because lineage is diagnostic and must never become a
+// reason a decision fails.
 func NewPostgresStore(dsn string, log *slog.Logger) (*PostgresStore, error) {
 	pool, err := pgxpool.New(context.Background(), dsn)
 	if err != nil {
@@ -54,6 +51,7 @@ func NewPostgresStore(dsn string, log *slog.Logger) (*PostgresStore, error) {
 
 	store := &PostgresStore{
 		pool:  pool,
+		dsn:   dsn,
 		queue: make(chan *riskv1.DecisionLineage, queueDepth),
 		done:  make(chan struct{}),
 		log:   log,
@@ -63,11 +61,9 @@ func NewPostgresStore(dsn string, log *slog.Logger) (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) run() {
-	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
-	if _, err := s.pool.Exec(ctx, schema); err != nil {
-		s.log.Warn("lineage schema could not be applied; writes will fail until it exists", "error", err)
+	if err := migrate.Run(migrationsFS, s.dsn, migrationsTable); err != nil {
+		s.log.Warn("lineage schema migration failed; writes will fail until it succeeds", "error", err)
 	}
-	cancel()
 
 	for entry := range s.queue {
 		s.write(entry)
@@ -75,30 +71,103 @@ func (s *PostgresStore) run() {
 	close(s.done)
 }
 
+// write persists one DecisionLineage as a transaction across the five
+// normalised tables (ADR-018), plus the raw marshalled message on decisions
+// as the authoritative, byte-for-byte record replay reconstructs from.
 func (s *PostgresStore) write(entry *riskv1.DecisionLineage) {
-	payload, err := proto.Marshal(entry)
+	raw, err := proto.Marshal(entry)
 	if err != nil {
 		s.log.Warn("lineage entry could not be serialised", "decision_id", entry.GetDecisionId(), "error", err)
 		return
 	}
+	r := buildRows(entry, raw)
 
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO decision_lineage (decision_id, transaction_id, decided_at, decision, shadow, lineage)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (decision_id) DO NOTHING`,
-		entry.GetDecisionId(),
-		entry.GetTransactionId().GetValue(),
-		entry.GetDecidedAt().AsTime(),
-		entry.GetOutcome().GetDecision().String(),
-		entry.GetShadow(),
-		payload,
-	)
+	err = s.pool.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+
+		if err := insertAll(ctx, tx, r); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	})
 	if err != nil {
 		s.log.Warn("lineage write failed", "decision_id", entry.GetDecisionId(), "error", err)
 	}
+}
+
+func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
+	d := r.decision
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO decisions (
+			id, transaction_id, decided_at, decision, aggregate_score, degradation_state,
+			policy_id, policy_version, policy_fallback, shadow, deadline_ms, total_elapsed_ms, raw_lineage
+		) VALUES ($1, $2, to_timestamp($3), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		ON CONFLICT (id) DO NOTHING`,
+		d.ID, d.TransactionID, d.DecidedAtUnix, d.Decision, d.AggregateScore, d.DegradationState,
+		d.PolicyID, d.PolicyVersion, d.PolicyFallback, d.Shadow, d.DeadlineMs, d.TotalElapsedMs, d.RawLineage,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// Already recorded by a previous attempt; the child tables would
+		// already exist too, so there is nothing more to insert.
+		return nil
+	}
+
+	for _, e := range r.agentEvaluations {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO agent_evaluations (
+				decision_id, agent_id, outcome_kind, score, confidence, weight_basis_points,
+				weighted_contribution, included, exclusion_reason, agent_version,
+				failure_kind, failure_component, failure_message, failure_retryable, observed_latency_ms
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			d.ID, e.AgentID, e.OutcomeKind, e.Score, e.Confidence, e.WeightBasisPoints,
+			e.WeightedContribution, e.Included, e.ExclusionReason, e.AgentVersion,
+			e.FailureKind, e.FailureComponent, e.FailureMessage, e.FailureRetryable, e.ObservedLatencyMs,
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, span := range r.executionSpans {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO execution_spans (decision_id, stage, elapsed_ms, budget_ms)
+			VALUES ($1, $2, $3, $4)`,
+			d.ID, span.Stage, span.ElapsedMs, span.BudgetMs,
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, failure := range r.decisionFailures {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO decision_failures (decision_id, kind, component, message, elapsed_ms, retryable)
+			VALUES ($1, $2, $3, $4, $5, $6)`,
+			d.ID, failure.Kind, failure.Component, failure.Message, failure.ElapsedMs, failure.Retryable,
+		); err != nil {
+			return err
+		}
+	}
+
+	for _, version := range r.governedVersions {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO governed_versions (decision_id, artefact, name, version, digest)
+			VALUES ($1, $2, $3, $4, $5)`,
+			d.ID, version.Artefact, version.Name, version.Version, version.Digest,
+		); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Record enqueues entry for persistence. See Store.

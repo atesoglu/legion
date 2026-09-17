@@ -172,17 +172,24 @@ guessed at.
 
 Lineage is recorded for every evaluation; nothing yet reads it back. Replay
 (ADR-013), the evaluation framework and shadow mode (ADR-012) are what
-consume a lineage dataset, and none of the three is built yet — nor is the
-investigation plane (Zone 6, ADR-017), which is triggered by the same
-asynchronous writer this section describes. Until one is, the reproducibility
-claim below is exercised only by `test/e2e`'s direct read of the stored rows,
-not by an actual replay run.
+consume a lineage dataset, and none of the three is built yet. The
+investigation plane (Zone 6, ADR-017), triggered by the same asynchronous
+writer this section describes, is partially built and does read lineage's
+`DecisionOutcome` (via `CaseTrigger`) -- but not the persisted rows below;
+it acts on the outcome the writer already holds in memory before writing.
+Until replay/shadow/evaluation exist, the reproducibility claim below is
+exercised only by `test/e2e`'s direct read of the stored rows, not by an
+actual replay run.
 
 The schema this was shipped with (one row, the whole `DecisionLineage`
 message marshalled into a `bytea` column, plus a handful of indexed columns)
-is superseded by ADR-018, which normalises it into per-concept tables so that
-Zone 6 and replay can query it directly rather than deserialising a blob per
-row. The migration is owed, not yet applied; see `architecture.md` §9.
+has been replaced by ADR-018's normalised per-concept tables
+(`decisions`/`agent_evaluations`/`execution_spans`/`decision_failures`/
+`governed_versions`), applied through a real migration tool
+(`internal/platform/migrate`) rather than idempotent DDL, so Zone 6 and
+replay can query it directly rather than deserialising a blob per row. The
+raw `DecisionLineage` bytes are still kept, on `decisions.raw_lineage`, as
+the byte-for-byte authoritative record the relational tables project.
 
 The reproducibility claim Legion makes is precise:
 

@@ -71,8 +71,8 @@ func main() {
 	}
 	defer st.Close()
 
-	if err := st.ApplySchema(context.Background()); err != nil {
-		log.Warn("investigation schema could not be applied; operations will fail until it exists", "error", err)
+	if err := st.ApplyMigrations(); err != nil {
+		log.Warn("investigation schema migration failed; operations will fail until it succeeds", "error", err)
 	}
 
 	redisClient := redis.NewClient(&redis.Options{

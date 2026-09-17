@@ -1120,9 +1120,12 @@ final_decision
 
 The project should demonstrate how this lineage can be used during an investigation.
 
-Shipped initially as one denormalised table (`decision_lineage`); ADR-018
-supersedes that shape with the normalised, queryable schema §49 and Zone 6
-(§45) depend on.
+Shipped initially as one denormalised table (`decision_lineage`); ADR-018's
+normalised, queryable schema (`decisions`, `agent_evaluations`,
+`execution_spans`, `decision_failures`, `governed_versions`) replaced it via
+a real migration tool (`internal/platform/migrate`, golang-migrate), which
+§45 (Zone 6) and future evaluation/replay work query directly rather than
+deserialising a blob per row.
 
 ---
 
@@ -1365,9 +1368,9 @@ Target:
 
 **A complete transaction → risk decision pipeline without LLM inference.**
 
-**Status: Complete.** Decision lineage ships to the schema described in
-`internal/lineage`; ADR-018 supersedes that schema's shape and the migration
-to it is Phase 2 work, not a Phase 1 regression.
+**Status: Complete.** Decision lineage ships to ADR-018's normalised schema
+in `internal/lineage`, applied via a real migration tool
+(`internal/platform/migrate`) as Phase 2 work; not a Phase 1 regression.
 
 ---
 

@@ -353,11 +353,12 @@ easy to mistake for working:
   identity are Phase 4 (ADR-011).
 - **Lineage is written but nothing reads it back.** Every evaluation now
   produces a `DecisionLineage` with populated `GovernedVersions`, persisted to
-  PostgreSQL and returned inline on request. That is what replay (ADR-013) and
-  shadow mode (ADR-012) require, but neither has been built yet to consume it.
-  Its schema is also known to be wrong in one respect: ADR-018 supersedes the
-  denormalised shape this shipped with, and a migration is owed before Zone 6
-  or replay can query it directly.
+  PostgreSQL (ADR-018's normalised `decisions`/`agent_evaluations`/
+  `execution_spans`/`decision_failures`/`governed_versions` schema, applied
+  via a real migration tool -- `internal/platform/migrate`, golang-migrate --
+  rather than the idempotent-DDL shape it originally shipped with) and
+  returned inline on request. That is what replay (ADR-013) and shadow mode
+  (ADR-012) require, but neither has been built yet to consume it.
 
 One gap this list used to carry has closed: **transaction idempotency**
 (ADR-019) is now implemented. `Transaction.idempotency_key` is required, and

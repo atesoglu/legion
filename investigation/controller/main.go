@@ -71,11 +71,11 @@ func main() {
 	}
 	defer st.Close()
 
-	if err := st.ApplySchema(context.Background()); err != nil {
+	if err := st.ApplyMigrations(); err != nil {
 		// Not fatal: like every other Legion store, a database that is not
 		// yet reachable must not block startup. Every operation below will
 		// fail and log until it can be applied.
-		log.Warn("investigation schema could not be applied; operations will fail until it exists", "error", err)
+		log.Warn("investigation schema migration failed; operations will fail until it succeeds", "error", err)
 	}
 	seedAgents(context.Background(), st, log)
 

@@ -84,7 +84,7 @@ func fetchStoredLineage(t *testing.T, dsn, decisionID string) *riskv1.DecisionLi
 	for {
 		var payload []byte
 		err := pool.QueryRow(ctx,
-			`SELECT lineage FROM decision_lineage WHERE decision_id = $1`, decisionID).Scan(&payload)
+			`SELECT raw_lineage FROM decisions WHERE id = $1`, decisionID).Scan(&payload)
 		if err == nil {
 			var entry riskv1.DecisionLineage
 			if err := proto.Unmarshal(payload, &entry); err != nil {

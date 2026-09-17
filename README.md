@@ -24,7 +24,7 @@ them.
 | Decision path | Gateway → orchestrator → velocity, device, geo → sentinel |
 | Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
-| Decision lineage | Constructed on every evaluation and persisted to PostgreSQL (ADR-007); returned inline only when `options.include_lineage` is set |
+| Decision lineage | Constructed on every evaluation and persisted to PostgreSQL, normalised per ADR-018 (`decisions`, `agent_evaluations`, `execution_spans`, `decision_failures`, `governed_versions`, applied via a real migration tool); returned inline only when `options.include_lineage` is set |
 | Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
 | Capability runtime | Full enforcement pipeline (identity, grant, scope, constraint, budget; ADR-005) against a static manifest; one real caller (`investigation/worker`); no caller yet on the fixed-enum path (deterministic agents are push-style, behavioural agent doesn't exist) |
 | Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017), every tool call checked by the capability runtime; `RegisterAgent` API and real tool/model calls not implemented |
