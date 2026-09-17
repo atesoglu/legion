@@ -311,23 +311,33 @@ engines and the sentinel all run, and a transaction presented at the edge
 returns a decision.
 
 The following exist only as documented intent: the inference runtime, the
-behavioural agent, the capability runtime implementation, Kubernetes
-manifests, the fraud simulator, the replay engine, the evaluation framework
-and all benchmarks.
+behavioural agent, Kubernetes manifests, the fraud simulator, the replay
+engine, the evaluation framework and all benchmarks.
+
+The capability runtime (ADR-005) is partially built: `control-plane/capability`
+runs the full enforcement pipeline (identity, grant, scope,
+constraint, budget) against a static, reviewable manifest
+(`broker.Default()`), and it has one real caller -- `investigation/worker`
+calls it before every mocked tool execution, and a denial actually stops the
+tool from "running" and dead-letters the task. What remains documented
+intent: the fixed-`Capability`-enum path has no caller (the deterministic
+agents are served push-style and the behavioural agent does not exist), a
+`RegisterAgent`/manifest API, mTLS-asserted `workload_id` (a caller-asserted
+stand-in today), and durable audit storage.
 
 Zone 6 (ADR-017) is partially built, not documented intent only: the
 controller, the generic worker, the Postgres schema and the Redis Streams
 task queue all run, and a `REVIEW` decision produces a case, an
 investigation, a task per matching activation rule, and a recorded finding
-per task, proven end to end by `test/e2e`. What is still only documented
-intent inside Zone 6: the capability runtime it is meant to call through
-(nothing enforces `allowed_tools` yet, because nothing exists to enforce it
-against), the `RegisterAgent` API (two agents are seeded directly at
-controller startup instead), the relationship activation rule (device and
-velocity both exist; no relationship investigation agent is seeded), and the
-shared inference runtime a real agent would call. Both seeded agents' tool
-calls and findings are canned, deterministic output read from their
-`AgentDefinition.configuration`, not a model's conclusion — the worker itself
+per task, proven end to end by `test/e2e`. Every tool call the worker makes
+now goes through a real capability check (see above) before it "runs". What
+is still only documented intent inside Zone 6: the `RegisterAgent` API (two
+agents are seeded directly at controller startup instead), the relationship
+activation rule (device and velocity both exist; no relationship
+investigation agent is seeded), and the shared inference runtime a real
+agent would call. Both seeded agents' tool calls and findings are canned,
+deterministic output read from their `AgentDefinition.configuration`, not a
+model's conclusion — the worker itself
 contains no agent-specific code, exactly as ADR-014 requires.
 
 Four gaps inside the parts that do exist are worth naming, because each is

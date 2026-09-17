@@ -61,6 +61,19 @@ message CapabilityGrant {
   CapabilityConstraint constraint = 2;
 }
 
+// ToolGrant is a grantable verb for an investigation agent (ADR-017). Tool
+// names are not members of the closed Capability enum above -- they are
+// exactly the "database of grantable verbs" capability-model.md section 4
+// describes as the tool-registry analogue of a CapabilityGrant, sourced from
+// agent_definitions.allowed_tools rather than from this manifest's grants.
+message ToolGrant {
+  string tool_name = 1;
+
+  // Maximum number of calls to this tool within one task. Zero means the
+  // runtime default, which is never unlimited.
+  uint32 max_invocations = 2;
+}
+
 // AgentIdentity is the authenticated identity of an agent workload.
 message AgentIdentity {
   // Stable logical agent identifier, for example "behavioral".
@@ -83,6 +96,10 @@ message AgentManifest {
   // Whether this agent's signal may be consumed by the sentinel at all. Lets
   // an agent be deployed and observed before it is allowed to matter.
   bool signal_enabled = 3;
+
+  // Investigation agents (ADR-017) are granted tools instead of, or in
+  // addition to, fixed capabilities.
+  repeated ToolGrant tool_grants = 4;
 }
 
 // CapabilityVerdict is the outcome of one authorisation check.
@@ -116,4 +133,59 @@ message CapabilityAudit {
 
   // Operator-facing detail. Never contains feature values or subject data.
   string detail = 7;
+}
+
+// CheckCapabilityRequest asks whether identity may exercise capability,
+// scoped to evaluation_id, for the given feature names/window (checked
+// against the grant's CapabilityConstraint if one is configured).
+message CheckCapabilityRequest {
+  AgentIdentity identity = 1;
+
+  // The evaluation this call is scoped to (capability-model.md section 5's
+  // "scope" check).
+  string evaluation_id = 2;
+
+  Capability capability = 3;
+  repeated string requested_feature_names = 4;
+  legion.risk.v1.FeatureWindow requested_window = 5;
+}
+
+// CheckToolCapabilityRequest is CheckCapabilityRequest's analogue for an
+// investigation agent's tool call (ADR-017): the grantable verb is
+// tool_name, checked against the agent's ToolGrant entries rather than a
+// fixed Capability enum member.
+message CheckToolCapabilityRequest {
+  AgentIdentity identity = 1;
+
+  // The task this call is scoped to.
+  string scope_id = 2;
+
+  string tool_name = 3;
+}
+
+// CheckCapabilityResponse is the outcome of a CheckCapability call. Every
+// call is audited regardless of verdict; the audit itself never reaches the
+// caller, only the verdict does (capability-model.md section 5: "the agent
+// learns that it was refused; it learns nothing about what exists").
+message CheckCapabilityResponse {
+  CapabilityVerdict verdict = 1;
+  string detail = 2;
+}
+
+// CheckToolCapabilityResponse is CheckCapabilityResponse's analogue for
+// CheckToolCapability; identical shape, named separately per RPC.
+message CheckToolCapabilityResponse {
+  CapabilityVerdict verdict = 1;
+  string detail = 2;
+}
+
+// CapabilityRuntimeService is the capability broker ADR-005 and
+// capability-model.md specify: deny by default, every action an explicit,
+// audited, scoped grant. It is the one enforcement mechanism for both the
+// fixed-enum real-time agents and the tool-granted investigation agents
+// (capability-model.md's header: "there is one enforcement mechanism, not
+// one per zone").
+service CapabilityRuntimeService {
+  rpc CheckCapability(CheckCapabilityRequest) returns (CheckCapabilityResponse);
+  rpc CheckToolCapability(CheckToolCapabilityRequest) returns (CheckToolCapabilityResponse);
 }

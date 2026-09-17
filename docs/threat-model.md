@@ -306,20 +306,25 @@ exfiltrate data gathered during a case.
   bypassing the evidence/finding distinction (§3 of `investigation-model.md`),
   and its findings are always attributed and timestamped.
 
-  **Not yet enforced.** The capability runtime (ADR-005) that this mitigation
-  depends on does not exist yet — it was deliberately deferred behind the
-  investigation plane's first slice, since nothing called it. The one
-  investigation agent that exists today (`investigation/worker`) does not
-  call a real tool registry or model at all: its "tool call" and "finding"
-  are canned, deterministic output, with no capability check anywhere in the
-  path, because there is nothing yet to check against. This is a real,
-  current gap, not a hypothetical one — it closes once the capability
-  runtime ships and the worker is wired through it, in that order, before
-  any agent with real tool access exists.
-- **Detection.** Tool-call audit trail; finding-to-evidence reference
-  completeness (a finding with no cited evidence is itself a signal);
-  per-agent confidence distribution monitored the same way per-agent score
-  distribution is monitored for T-01.
+  **Enforced, with real limits.** `control-plane/capability` (ADR-005) runs
+  the identity/grant/scope/constraint/budget pipeline, and
+  `investigation/worker` calls `CheckToolCapability` before every tool
+  execution; a denial genuinely stops the call and dead-letters the task.
+  Three gaps remain, none of them hypothetical: (1) there is no real tool
+  registry behind the check yet — the one investigation agent's "tool call"
+  is still canned, deterministic output, so the check gates a mock, not an
+  arbitrary action a compromised agent might otherwise take; (2) the
+  manifest granting `allowed_tools` is a static Go default, hand-kept in
+  sync with `agent_definitions` rather than read from it, so the two can
+  drift; (3) `workload_id` is asserted by the caller, a Phase 1 stand-in for
+  the mTLS peer identity ADR-011 will provide, so a compromised worker
+  process could still assert any identity it likes. This narrows, but does
+  not close, T-14 until a real tool registry and mTLS both exist.
+- **Detection.** Tool-call audit trail (logged, not yet persisted anywhere
+  durable — Phase 4 scope); finding-to-evidence reference completeness (a
+  finding with no cited evidence is itself a signal); per-agent confidence
+  distribution monitored the same way per-agent score distribution is
+  monitored for T-01.
 - **Residual risk.** Same as T-02: the attacker still sees whatever the
   agent's granted tools legitimately expose, for the cases it is activated
   on. Capabilities bound scope, not sensitivity, in Zone 6 exactly as in

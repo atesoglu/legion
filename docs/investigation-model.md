@@ -186,12 +186,19 @@ Python function, shell command, SQL statement or network destination — it
 selects from a closed, named tool registry, and the runtime — not the model —
 decides whether the call is authorised.
 
-**Not built yet.** The capability runtime (ADR-005) this section depends on
-does not exist. `investigation/worker` today produces one canned, mocked
-"tool call" and finding per task, with no registry, no capability check and
-no model in the path at all — it proves the task/evidence/finding data model
-and lifecycle, nothing about tool authorisation. This section describes what
-must be true before a real investigation agent runs, not what runs today.
+**Built, with real limits.** `control-plane/capability` runs the pipeline
+above: `investigation/worker` calls `CheckToolCapability` before every tool
+execution, and a denial actually stops it and dead-letters the task rather
+than logging a warning and continuing. What is not real yet: the tool call
+itself is still one canned, mocked result per task, so the check gates a
+fake action, not an arbitrary one; the manifest granting `allowed_tools` is
+a static Go default (`broker.Default()`) kept manually in sync with
+`agent_definitions`, not read from it directly; and `workload_id` is
+asserted by the caller, a Phase 1 stand-in for the mTLS peer identity
+ADR-011 will eventually provide. None of that makes the check theatre —
+the tool genuinely does not run on a denial — but it does mean the grant
+source is a second, hand-maintained copy of the registry, and there is
+nothing yet stopping the two from drifting apart.
 
 ## 8. Observability and cost
 
@@ -235,8 +242,9 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
   conclusion.
 - It does not claim this replaces a human analyst. The investigation result
   is evidence for one, not a replacement of one.
-- It does not claim tool access is authorised or audited in any enforced
-  sense yet — see §7's note that the capability runtime does not exist.
+- It does not claim the capability check gates anything but a mocked tool
+  call, or that its manifest is read from `agent_definitions` rather than a
+  hand-maintained copy of it — see §7's note on both.
 - It does not claim case creation is safe from duplication across callers.
   A case is deduplicated on `idempotency_key` alone (see `CaseTrigger`'s
   proto comment), not `(caller, idempotency_key)` as the gateway's own dedup

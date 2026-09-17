@@ -1,11 +1,20 @@
 # Capability model
 
-Status: Phase 2 (restructured; moved ahead of the behavioural agent, ADR-017).
-The contract exists (`legion/agent/v1/capability.proto`) and nothing yet
-enforces it: no capability broker runs, and no agent holds a credential to
-broker access to. This model governs Zone 6 investigation agents
-(ADR-017) as well as the behavioural agent — there is one enforcement
-mechanism, not one per zone.
+Status: partially built. `control-plane/capability` runs the enforcement
+pipeline this document describes (identity, grant, scope, constraint,
+budget, in that order, every call audited) and it has one real caller
+today: `investigation/worker` calls `CheckToolCapability` before every
+mocked tool execution. What is still only documented intent: the
+`CheckCapability` (fixed-enum) path has no caller yet, because neither the
+deterministic real-time agents (served push-style, so they never call out)
+nor the behavioural agent (Phase 3, not built) exercise it; a
+`RegisterAgent`/manifest API (the manifest is a static Go default,
+`control-plane/capability/internal/broker/manifest.go`); mTLS/workload
+identity (`workload_id` is asserted by the caller today, a Phase 1 stand-in,
+same posture the rest of the platform takes pending ADR-011); and durable
+audit storage (every check is logged, nothing persists it — Phase 4 scope).
+This model governs Zone 6 investigation agents (ADR-017) as well as the
+behavioural agent — there is one enforcement mechanism, not one per zone.
 
 ## 1. Problem
 

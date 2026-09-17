@@ -16,25 +16,31 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/atesoglu/legion/internal/platform/config"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	"github.com/atesoglu/legion/investigation/internal/queue"
 	"github.com/atesoglu/legion/investigation/internal/store"
+	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	investigationv1 "github.com/atesoglu/legion/protocol/gen/go/legion/investigation/v1"
 )
 
 const (
-	defaultListenAddress      = ":9800"
-	defaultInvestigationDSN   = "postgres://legion:legion@127.0.0.1:5432/legion?sslmode=disable"
-	defaultInvestigationRedis = "127.0.0.1:6381"
+	defaultListenAddress             = ":9800"
+	defaultInvestigationDSN          = "postgres://legion:legion@127.0.0.1:5432/legion?sslmode=disable"
+	defaultInvestigationRedis        = "127.0.0.1:6381"
+	defaultCapabilityRuntimeEndpoint = "127.0.0.1:9900"
 
 	taskStream  = "investigation.tasks"
 	workerGroup = "workers"
@@ -83,11 +89,30 @@ func main() {
 		log.Warn("task consumer group could not be ensured at startup; will retry on each read", "error", err)
 	}
 
+	// A down capability runtime must not open the door: CheckToolCapability
+	// failing closed (see checkTool below) is what makes it safe to dial
+	// without blocking startup, the same posture every other dependency in
+	// this worker takes.
+	capabilityConn, err := grpc.NewClient(
+		envOr("LEGION_CAPABILITY_RUNTIME", defaultCapabilityRuntimeEndpoint),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		log.Error("capability runtime endpoint is not dialable", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := capabilityConn.Close(); err != nil {
+			log.Warn("capability runtime connection close failed", "error", err)
+		}
+	}()
+	capabilityClient := agentv1.NewCapabilityRuntimeServiceClient(capabilityConn)
+
 	consumer := consumerName()
 	stop := make(chan struct{})
 
 	start := func() error {
-		runLoop(stop, consumer, tasks, st, log)
+		runLoop(stop, consumer, tasks, st, capabilityClient, log)
 		return nil
 	}
 	stopFn := func(context.Context) error {
@@ -111,7 +136,10 @@ func consumerName() string {
 
 // runLoop consumes new tasks, and reclaims tasks abandoned by a crashed
 // worker, until stop is closed.
-func runLoop(stop <-chan struct{}, consumer string, tasks *queue.Stream, st *store.Store, log *slog.Logger) {
+func runLoop(
+	stop <-chan struct{}, consumer string, tasks *queue.Stream, st *store.Store,
+	capability agentv1.CapabilityRuntimeServiceClient, log *slog.Logger,
+) {
 	ctx := context.Background()
 	for {
 		select {
@@ -135,7 +163,7 @@ func runLoop(stop <-chan struct{}, consumer string, tasks *queue.Stream, st *sto
 		}
 
 		for _, message := range messages {
-			handleTask(ctx, st, message.Payload, log)
+			handleTask(ctx, st, capability, message.Payload, log)
 			if err := tasks.Ack(ctx, message.ID); err != nil {
 				log.Warn("task ack failed", "id", message.ID, "error", err)
 			}
@@ -146,7 +174,9 @@ func runLoop(stop <-chan struct{}, consumer string, tasks *queue.Stream, st *sto
 // handleTask runs one task to completion, or fails it. It is safe to call
 // more than once for the same task_id (at-least-once delivery, ADR-017
 // section 3): a task already in a terminal state is a no-op.
-func handleTask(ctx context.Context, st *store.Store, payload []byte, log *slog.Logger) {
+func handleTask(
+	ctx context.Context, st *store.Store, capability agentv1.CapabilityRuntimeServiceClient, payload []byte, log *slog.Logger,
+) {
 	envelope := &investigationv1.Task{}
 	if err := proto.Unmarshal(payload, envelope); err != nil {
 		log.Warn("task envelope is corrupt; dropping", "error", err)
@@ -189,9 +219,13 @@ func handleTask(ctx context.Context, st *store.Store, payload []byte, log *slog.
 		return
 	}
 
-	if err := runAgent(ctx, st, task, agent, log); err != nil {
+	if err := runAgent(ctx, st, capability, task, agent, log); err != nil {
 		log.Warn("agent execution failed", "task_id", task.TaskID, "agent_id", task.AgentID, "error", err)
-		failTask(ctx, st, task, task.Attempt+1 >= task.MaxAttempts, log)
+		// A capability denial is a policy decision, not a transient fault:
+		// retrying would ask the same broker the same question and get the
+		// same answer, so it goes straight to DEAD_LETTER rather than
+		// waiting out max_attempts.
+		failTask(ctx, st, task, errors.Is(err, errCapabilityDenied) || task.Attempt+1 >= task.MaxAttempts, log)
 		return
 	}
 
@@ -219,16 +253,34 @@ func failTask(ctx context.Context, st *store.Store, task *store.Task, deadLetter
 	}
 }
 
-// runAgent is the mocked tool call and finding every investigation agent
-// currently produces. It is deterministic and reads its canned output from
-// agent.Configuration rather than branching on agent.AgentID (ADR-014: no
-// file may branch on an agent id) -- there is no tool registry (ADR-005's
-// capability runtime) and no shared inference runtime (Phase 3) to call yet.
-func runAgent(ctx context.Context, st *store.Store, task *store.Task, agent *store.AgentDefinition, log *slog.Logger) error {
+// errCapabilityDenied marks a runAgent failure caused by the capability
+// runtime, distinct from an ordinary tool/store error, so handleTask can
+// route it straight to DEAD_LETTER instead of the normal retry path.
+var errCapabilityDenied = errors.New("investigation-worker: capability denied")
+
+// runAgent checks the agent's capability to call its one tool (ADR-005),
+// then produces the mocked tool call and finding every investigation agent
+// currently produces. The finding is deterministic and reads its canned
+// output from agent.Configuration rather than branching on agent.AgentID
+// (ADR-014: no file may branch on an agent id) -- there is no shared
+// inference runtime (Phase 3) to call yet, only a real capability check in
+// front of a fake tool.
+func runAgent(
+	ctx context.Context, st *store.Store, capability agentv1.CapabilityRuntimeServiceClient,
+	task *store.Task, agent *store.AgentDefinition, log *slog.Logger,
+) error {
 	started := time.Now()
 	toolName := "lookup_history"
 	if len(agent.AllowedTools) > 0 {
 		toolName = agent.AllowedTools[0]
+	}
+
+	if err := checkTool(ctx, capability, agent.AgentID, task.TaskID, toolName, log); err != nil {
+		if _, insertErr := st.InsertToolExecution(ctx, task.TaskID, toolName,
+			map[string]any{"agent_id": agent.AgentID}, nil, "DENIED", time.Since(started)); insertErr != nil {
+			log.Warn("recording a denied tool execution failed", "task_id", task.TaskID, "error", insertErr)
+		}
+		return err
 	}
 
 	resultKey := stringConfig(agent, "result_key", "history")
@@ -254,6 +306,31 @@ func runAgent(ctx context.Context, st *store.Store, task *store.Task, agent *sto
 	}
 
 	log.Info("investigation task completed", "task_id", task.TaskID, "agent_id", agent.AgentID)
+	return nil
+}
+
+// checkTool enforces ADR-005 before a tool runs. A denial from the broker,
+// and an unreachable broker, are both treated as denied: a capability
+// runtime that cannot answer must not be mistaken for one that said yes.
+func checkTool(
+	ctx context.Context, capability agentv1.CapabilityRuntimeServiceClient, agentID, taskID, toolName string, log *slog.Logger,
+) error {
+	response, err := capability.CheckToolCapability(ctx, &agentv1.CheckToolCapabilityRequest{
+		Identity: &agentv1.AgentIdentity{AgentId: agentID, WorkloadId: agentID},
+		ScopeId:  taskID,
+		ToolName: toolName,
+	})
+	if err != nil {
+		log.Warn("capability runtime unavailable; denying rather than assuming allowed",
+			"agent_id", agentID, "task_id", taskID, "tool", toolName, "error", err)
+		return fmt.Errorf("%w: capability runtime unavailable: %v", errCapabilityDenied, err)
+	}
+	if response.GetVerdict() != agentv1.CapabilityVerdict_CAPABILITY_VERDICT_ALLOWED {
+		log.Warn("tool call denied by the capability runtime",
+			"agent_id", agentID, "task_id", taskID, "tool", toolName,
+			"verdict", response.GetVerdict().String(), "detail", response.GetDetail())
+		return fmt.Errorf("%w: %s: %s", errCapabilityDenied, response.GetVerdict().String(), response.GetDetail())
+	}
 	return nil
 }
 

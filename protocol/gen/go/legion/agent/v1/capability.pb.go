@@ -288,6 +288,65 @@ func (x *CapabilityGrant) GetConstraint() *CapabilityConstraint {
 	return nil
 }
 
+// ToolGrant is a grantable verb for an investigation agent (ADR-017). Tool
+// names are not members of the closed Capability enum above -- they are
+// exactly the "database of grantable verbs" capability-model.md section 4
+// describes as the tool-registry analogue of a CapabilityGrant, sourced from
+// agent_definitions.allowed_tools rather than from this manifest's grants.
+type ToolGrant struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ToolName string                 `protobuf:"bytes,1,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	// Maximum number of calls to this tool within one task. Zero means the
+	// runtime default, which is never unlimited.
+	MaxInvocations uint32 `protobuf:"varint,2,opt,name=max_invocations,json=maxInvocations,proto3" json:"max_invocations,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ToolGrant) Reset() {
+	*x = ToolGrant{}
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolGrant) ProtoMessage() {}
+
+func (x *ToolGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolGrant.ProtoReflect.Descriptor instead.
+func (*ToolGrant) Descriptor() ([]byte, []int) {
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ToolGrant) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+func (x *ToolGrant) GetMaxInvocations() uint32 {
+	if x != nil {
+		return x.MaxInvocations
+	}
+	return 0
+}
+
 // AgentIdentity is the authenticated identity of an agent workload.
 type AgentIdentity struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -304,7 +363,7 @@ type AgentIdentity struct {
 
 func (x *AgentIdentity) Reset() {
 	*x = AgentIdentity{}
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[2]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -316,7 +375,7 @@ func (x *AgentIdentity) String() string {
 func (*AgentIdentity) ProtoMessage() {}
 
 func (x *AgentIdentity) ProtoReflect() protoreflect.Message {
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[2]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -329,7 +388,7 @@ func (x *AgentIdentity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentIdentity.ProtoReflect.Descriptor instead.
 func (*AgentIdentity) Descriptor() ([]byte, []int) {
-	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{2}
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *AgentIdentity) GetAgentId() string {
@@ -362,13 +421,16 @@ type AgentManifest struct {
 	// Whether this agent's signal may be consumed by the sentinel at all. Lets
 	// an agent be deployed and observed before it is allowed to matter.
 	SignalEnabled bool `protobuf:"varint,3,opt,name=signal_enabled,json=signalEnabled,proto3" json:"signal_enabled,omitempty"`
+	// Investigation agents (ADR-017) are granted tools instead of, or in
+	// addition to, fixed capabilities.
+	ToolGrants    []*ToolGrant `protobuf:"bytes,4,rep,name=tool_grants,json=toolGrants,proto3" json:"tool_grants,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AgentManifest) Reset() {
 	*x = AgentManifest{}
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[3]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -380,7 +442,7 @@ func (x *AgentManifest) String() string {
 func (*AgentManifest) ProtoMessage() {}
 
 func (x *AgentManifest) ProtoReflect() protoreflect.Message {
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[3]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -393,7 +455,7 @@ func (x *AgentManifest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentManifest.ProtoReflect.Descriptor instead.
 func (*AgentManifest) Descriptor() ([]byte, []int) {
-	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{3}
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *AgentManifest) GetIdentity() *AgentIdentity {
@@ -417,6 +479,13 @@ func (x *AgentManifest) GetSignalEnabled() bool {
 	return false
 }
 
+func (x *AgentManifest) GetToolGrants() []*ToolGrant {
+	if x != nil {
+		return x.ToolGrants
+	}
+	return nil
+}
+
 // CapabilityAudit is one immutable record of a capability invocation. Denials
 // and allowances are both recorded; a denial is a security signal.
 type CapabilityAudit struct {
@@ -435,7 +504,7 @@ type CapabilityAudit struct {
 
 func (x *CapabilityAudit) Reset() {
 	*x = CapabilityAudit{}
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[4]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -447,7 +516,7 @@ func (x *CapabilityAudit) String() string {
 func (*CapabilityAudit) ProtoMessage() {}
 
 func (x *CapabilityAudit) ProtoReflect() protoreflect.Message {
-	mi := &file_legion_agent_v1_capability_proto_msgTypes[4]
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -460,7 +529,7 @@ func (x *CapabilityAudit) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapabilityAudit.ProtoReflect.Descriptor instead.
 func (*CapabilityAudit) Descriptor() ([]byte, []int) {
-	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{4}
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CapabilityAudit) GetEvaluationId() string {
@@ -512,6 +581,262 @@ func (x *CapabilityAudit) GetDetail() string {
 	return ""
 }
 
+// CheckCapabilityRequest asks whether identity may exercise capability,
+// scoped to evaluation_id, for the given feature names/window (checked
+// against the grant's CapabilityConstraint if one is configured).
+type CheckCapabilityRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Identity *AgentIdentity         `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	// The evaluation this call is scoped to (capability-model.md section 5's
+	// "scope" check).
+	EvaluationId          string           `protobuf:"bytes,2,opt,name=evaluation_id,json=evaluationId,proto3" json:"evaluation_id,omitempty"`
+	Capability            Capability       `protobuf:"varint,3,opt,name=capability,proto3,enum=legion.agent.v1.Capability" json:"capability,omitempty"`
+	RequestedFeatureNames []string         `protobuf:"bytes,4,rep,name=requested_feature_names,json=requestedFeatureNames,proto3" json:"requested_feature_names,omitempty"`
+	RequestedWindow       v1.FeatureWindow `protobuf:"varint,5,opt,name=requested_window,json=requestedWindow,proto3,enum=legion.risk.v1.FeatureWindow" json:"requested_window,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *CheckCapabilityRequest) Reset() {
+	*x = CheckCapabilityRequest{}
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckCapabilityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckCapabilityRequest) ProtoMessage() {}
+
+func (x *CheckCapabilityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckCapabilityRequest.ProtoReflect.Descriptor instead.
+func (*CheckCapabilityRequest) Descriptor() ([]byte, []int) {
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *CheckCapabilityRequest) GetIdentity() *AgentIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+func (x *CheckCapabilityRequest) GetEvaluationId() string {
+	if x != nil {
+		return x.EvaluationId
+	}
+	return ""
+}
+
+func (x *CheckCapabilityRequest) GetCapability() Capability {
+	if x != nil {
+		return x.Capability
+	}
+	return Capability_CAPABILITY_UNSPECIFIED
+}
+
+func (x *CheckCapabilityRequest) GetRequestedFeatureNames() []string {
+	if x != nil {
+		return x.RequestedFeatureNames
+	}
+	return nil
+}
+
+func (x *CheckCapabilityRequest) GetRequestedWindow() v1.FeatureWindow {
+	if x != nil {
+		return x.RequestedWindow
+	}
+	return v1.FeatureWindow(0)
+}
+
+// CheckToolCapabilityRequest is CheckCapabilityRequest's analogue for an
+// investigation agent's tool call (ADR-017): the grantable verb is
+// tool_name, checked against the agent's ToolGrant entries rather than a
+// fixed Capability enum member.
+type CheckToolCapabilityRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Identity *AgentIdentity         `protobuf:"bytes,1,opt,name=identity,proto3" json:"identity,omitempty"`
+	// The task this call is scoped to.
+	ScopeId       string `protobuf:"bytes,2,opt,name=scope_id,json=scopeId,proto3" json:"scope_id,omitempty"`
+	ToolName      string `protobuf:"bytes,3,opt,name=tool_name,json=toolName,proto3" json:"tool_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckToolCapabilityRequest) Reset() {
+	*x = CheckToolCapabilityRequest{}
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckToolCapabilityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckToolCapabilityRequest) ProtoMessage() {}
+
+func (x *CheckToolCapabilityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckToolCapabilityRequest.ProtoReflect.Descriptor instead.
+func (*CheckToolCapabilityRequest) Descriptor() ([]byte, []int) {
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CheckToolCapabilityRequest) GetIdentity() *AgentIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
+}
+
+func (x *CheckToolCapabilityRequest) GetScopeId() string {
+	if x != nil {
+		return x.ScopeId
+	}
+	return ""
+}
+
+func (x *CheckToolCapabilityRequest) GetToolName() string {
+	if x != nil {
+		return x.ToolName
+	}
+	return ""
+}
+
+// CheckCapabilityResponse is the outcome of a CheckCapability call. Every
+// call is audited regardless of verdict; the audit itself never reaches the
+// caller, only the verdict does (capability-model.md section 5: "the agent
+// learns that it was refused; it learns nothing about what exists").
+type CheckCapabilityResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Verdict       CapabilityVerdict      `protobuf:"varint,1,opt,name=verdict,proto3,enum=legion.agent.v1.CapabilityVerdict" json:"verdict,omitempty"`
+	Detail        string                 `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckCapabilityResponse) Reset() {
+	*x = CheckCapabilityResponse{}
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckCapabilityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckCapabilityResponse) ProtoMessage() {}
+
+func (x *CheckCapabilityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckCapabilityResponse.ProtoReflect.Descriptor instead.
+func (*CheckCapabilityResponse) Descriptor() ([]byte, []int) {
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CheckCapabilityResponse) GetVerdict() CapabilityVerdict {
+	if x != nil {
+		return x.Verdict
+	}
+	return CapabilityVerdict_CAPABILITY_VERDICT_UNSPECIFIED
+}
+
+func (x *CheckCapabilityResponse) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
+// CheckToolCapabilityResponse is CheckCapabilityResponse's analogue for
+// CheckToolCapability; identical shape, named separately per RPC.
+type CheckToolCapabilityResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Verdict       CapabilityVerdict      `protobuf:"varint,1,opt,name=verdict,proto3,enum=legion.agent.v1.CapabilityVerdict" json:"verdict,omitempty"`
+	Detail        string                 `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckToolCapabilityResponse) Reset() {
+	*x = CheckToolCapabilityResponse{}
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckToolCapabilityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckToolCapabilityResponse) ProtoMessage() {}
+
+func (x *CheckToolCapabilityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_legion_agent_v1_capability_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckToolCapabilityResponse.ProtoReflect.Descriptor instead.
+func (*CheckToolCapabilityResponse) Descriptor() ([]byte, []int) {
+	return file_legion_agent_v1_capability_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CheckToolCapabilityResponse) GetVerdict() CapabilityVerdict {
+	if x != nil {
+		return x.Verdict
+	}
+	return CapabilityVerdict_CAPABILITY_VERDICT_UNSPECIFIED
+}
+
+func (x *CheckToolCapabilityResponse) GetDetail() string {
+	if x != nil {
+		return x.Detail
+	}
+	return ""
+}
+
 var File_legion_agent_v1_capability_proto protoreflect.FileDescriptor
 
 const file_legion_agent_v1_capability_proto_rawDesc = "" +
@@ -527,16 +852,21 @@ const file_legion_agent_v1_capability_proto_rawDesc = "" +
 	"capability\x12E\n" +
 	"\n" +
 	"constraint\x18\x02 \x01(\v2%.legion.agent.v1.CapabilityConstraintR\n" +
-	"constraint\"\x80\x01\n" +
+	"constraint\"Q\n" +
+	"\tToolGrant\x12\x1b\n" +
+	"\ttool_name\x18\x01 \x01(\tR\btoolName\x12'\n" +
+	"\x0fmax_invocations\x18\x02 \x01(\rR\x0emaxInvocations\"\x80\x01\n" +
 	"\rAgentIdentity\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\aversion\x18\x02 \x01(\v2\x19.legion.common.v1.VersionR\aversion\x12\x1f\n" +
 	"\vworkload_id\x18\x03 \x01(\tR\n" +
-	"workloadId\"\xac\x01\n" +
+	"workloadId\"\xe9\x01\n" +
 	"\rAgentManifest\x12:\n" +
 	"\bidentity\x18\x01 \x01(\v2\x1e.legion.agent.v1.AgentIdentityR\bidentity\x128\n" +
 	"\x06grants\x18\x02 \x03(\v2 .legion.agent.v1.CapabilityGrantR\x06grants\x12%\n" +
-	"\x0esignal_enabled\x18\x03 \x01(\bR\rsignalEnabled\"\xf7\x02\n" +
+	"\x0esignal_enabled\x18\x03 \x01(\bR\rsignalEnabled\x12;\n" +
+	"\vtool_grants\x18\x04 \x03(\v2\x1a.legion.agent.v1.ToolGrantR\n" +
+	"toolGrants\"\xf7\x02\n" +
 	"\x0fCapabilityAudit\x12#\n" +
 	"\revaluation_id\x18\x01 \x01(\tR\fevaluationId\x12:\n" +
 	"\bidentity\x18\x02 \x01(\v2\x1e.legion.agent.v1.AgentIdentityR\bidentity\x12;\n" +
@@ -547,7 +877,25 @@ const file_legion_agent_v1_capability_proto_rawDesc = "" +
 	"\voccurred_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"occurredAt\x123\n" +
 	"\aelapsed\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\aelapsed\x12\x16\n" +
-	"\x06detail\x18\a \x01(\tR\x06detail*\xfa\x01\n" +
+	"\x06detail\x18\a \x01(\tR\x06detail\"\xb8\x02\n" +
+	"\x16CheckCapabilityRequest\x12:\n" +
+	"\bidentity\x18\x01 \x01(\v2\x1e.legion.agent.v1.AgentIdentityR\bidentity\x12#\n" +
+	"\revaluation_id\x18\x02 \x01(\tR\fevaluationId\x12;\n" +
+	"\n" +
+	"capability\x18\x03 \x01(\x0e2\x1b.legion.agent.v1.CapabilityR\n" +
+	"capability\x126\n" +
+	"\x17requested_feature_names\x18\x04 \x03(\tR\x15requestedFeatureNames\x12H\n" +
+	"\x10requested_window\x18\x05 \x01(\x0e2\x1d.legion.risk.v1.FeatureWindowR\x0frequestedWindow\"\x90\x01\n" +
+	"\x1aCheckToolCapabilityRequest\x12:\n" +
+	"\bidentity\x18\x01 \x01(\v2\x1e.legion.agent.v1.AgentIdentityR\bidentity\x12\x19\n" +
+	"\bscope_id\x18\x02 \x01(\tR\ascopeId\x12\x1b\n" +
+	"\ttool_name\x18\x03 \x01(\tR\btoolName\"o\n" +
+	"\x17CheckCapabilityResponse\x12<\n" +
+	"\averdict\x18\x01 \x01(\x0e2\".legion.agent.v1.CapabilityVerdictR\averdict\x12\x16\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail\"s\n" +
+	"\x1bCheckToolCapabilityResponse\x12<\n" +
+	"\averdict\x18\x01 \x01(\x0e2\".legion.agent.v1.CapabilityVerdictR\averdict\x12\x16\n" +
+	"\x06detail\x18\x02 \x01(\tR\x06detail*\xfa\x01\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1e\n" +
@@ -563,7 +911,10 @@ const file_legion_agent_v1_capability_proto_rawDesc = "" +
 	"%CAPABILITY_VERDICT_DENIED_NOT_GRANTED\x10\x02\x12(\n" +
 	"$CAPABILITY_VERDICT_DENIED_CONSTRAINT\x10\x03\x12#\n" +
 	"\x1fCAPABILITY_VERDICT_DENIED_SCOPE\x10\x04\x12$\n" +
-	" CAPABILITY_VERDICT_DENIED_BUDGET\x10\x05B\xc8\x01\n" +
+	" CAPABILITY_VERDICT_DENIED_BUDGET\x10\x052\xf2\x01\n" +
+	"\x18CapabilityRuntimeService\x12d\n" +
+	"\x0fCheckCapability\x12'.legion.agent.v1.CheckCapabilityRequest\x1a(.legion.agent.v1.CheckCapabilityResponse\x12p\n" +
+	"\x13CheckToolCapability\x12+.legion.agent.v1.CheckToolCapabilityRequest\x1a,.legion.agent.v1.CheckToolCapabilityResponseB\xc8\x01\n" +
 	"\x13com.legion.agent.v1B\x0fCapabilityProtoP\x01ZBgithub.com/atesoglu/legion/protocol/gen/go/legion/agent/v1;agentv1\xa2\x02\x03LAX\xaa\x02\x0fLegion.Agent.V1\xca\x02\x0fLegion\\Agent\\V1\xe2\x02\x1bLegion\\Agent\\V1\\GPBMetadata\xea\x02\x11Legion::Agent::V1b\x06proto3"
 
 var (
@@ -579,37 +930,53 @@ func file_legion_agent_v1_capability_proto_rawDescGZIP() []byte {
 }
 
 var file_legion_agent_v1_capability_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_legion_agent_v1_capability_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_legion_agent_v1_capability_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_legion_agent_v1_capability_proto_goTypes = []any{
-	(Capability)(0),               // 0: legion.agent.v1.Capability
-	(CapabilityVerdict)(0),        // 1: legion.agent.v1.CapabilityVerdict
-	(*CapabilityConstraint)(nil),  // 2: legion.agent.v1.CapabilityConstraint
-	(*CapabilityGrant)(nil),       // 3: legion.agent.v1.CapabilityGrant
-	(*AgentIdentity)(nil),         // 4: legion.agent.v1.AgentIdentity
-	(*AgentManifest)(nil),         // 5: legion.agent.v1.AgentManifest
-	(*CapabilityAudit)(nil),       // 6: legion.agent.v1.CapabilityAudit
-	(v1.FeatureWindow)(0),         // 7: legion.risk.v1.FeatureWindow
-	(*v11.Version)(nil),           // 8: legion.common.v1.Version
-	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 10: google.protobuf.Duration
+	(Capability)(0),                     // 0: legion.agent.v1.Capability
+	(CapabilityVerdict)(0),              // 1: legion.agent.v1.CapabilityVerdict
+	(*CapabilityConstraint)(nil),        // 2: legion.agent.v1.CapabilityConstraint
+	(*CapabilityGrant)(nil),             // 3: legion.agent.v1.CapabilityGrant
+	(*ToolGrant)(nil),                   // 4: legion.agent.v1.ToolGrant
+	(*AgentIdentity)(nil),               // 5: legion.agent.v1.AgentIdentity
+	(*AgentManifest)(nil),               // 6: legion.agent.v1.AgentManifest
+	(*CapabilityAudit)(nil),             // 7: legion.agent.v1.CapabilityAudit
+	(*CheckCapabilityRequest)(nil),      // 8: legion.agent.v1.CheckCapabilityRequest
+	(*CheckToolCapabilityRequest)(nil),  // 9: legion.agent.v1.CheckToolCapabilityRequest
+	(*CheckCapabilityResponse)(nil),     // 10: legion.agent.v1.CheckCapabilityResponse
+	(*CheckToolCapabilityResponse)(nil), // 11: legion.agent.v1.CheckToolCapabilityResponse
+	(v1.FeatureWindow)(0),               // 12: legion.risk.v1.FeatureWindow
+	(*v11.Version)(nil),                 // 13: legion.common.v1.Version
+	(*timestamppb.Timestamp)(nil),       // 14: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 15: google.protobuf.Duration
 }
 var file_legion_agent_v1_capability_proto_depIdxs = []int32{
-	7,  // 0: legion.agent.v1.CapabilityConstraint.allowed_windows:type_name -> legion.risk.v1.FeatureWindow
+	12, // 0: legion.agent.v1.CapabilityConstraint.allowed_windows:type_name -> legion.risk.v1.FeatureWindow
 	0,  // 1: legion.agent.v1.CapabilityGrant.capability:type_name -> legion.agent.v1.Capability
 	2,  // 2: legion.agent.v1.CapabilityGrant.constraint:type_name -> legion.agent.v1.CapabilityConstraint
-	8,  // 3: legion.agent.v1.AgentIdentity.version:type_name -> legion.common.v1.Version
-	4,  // 4: legion.agent.v1.AgentManifest.identity:type_name -> legion.agent.v1.AgentIdentity
+	13, // 3: legion.agent.v1.AgentIdentity.version:type_name -> legion.common.v1.Version
+	5,  // 4: legion.agent.v1.AgentManifest.identity:type_name -> legion.agent.v1.AgentIdentity
 	3,  // 5: legion.agent.v1.AgentManifest.grants:type_name -> legion.agent.v1.CapabilityGrant
-	4,  // 6: legion.agent.v1.CapabilityAudit.identity:type_name -> legion.agent.v1.AgentIdentity
-	0,  // 7: legion.agent.v1.CapabilityAudit.capability:type_name -> legion.agent.v1.Capability
-	1,  // 8: legion.agent.v1.CapabilityAudit.verdict:type_name -> legion.agent.v1.CapabilityVerdict
-	9,  // 9: legion.agent.v1.CapabilityAudit.occurred_at:type_name -> google.protobuf.Timestamp
-	10, // 10: legion.agent.v1.CapabilityAudit.elapsed:type_name -> google.protobuf.Duration
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	4,  // 6: legion.agent.v1.AgentManifest.tool_grants:type_name -> legion.agent.v1.ToolGrant
+	5,  // 7: legion.agent.v1.CapabilityAudit.identity:type_name -> legion.agent.v1.AgentIdentity
+	0,  // 8: legion.agent.v1.CapabilityAudit.capability:type_name -> legion.agent.v1.Capability
+	1,  // 9: legion.agent.v1.CapabilityAudit.verdict:type_name -> legion.agent.v1.CapabilityVerdict
+	14, // 10: legion.agent.v1.CapabilityAudit.occurred_at:type_name -> google.protobuf.Timestamp
+	15, // 11: legion.agent.v1.CapabilityAudit.elapsed:type_name -> google.protobuf.Duration
+	5,  // 12: legion.agent.v1.CheckCapabilityRequest.identity:type_name -> legion.agent.v1.AgentIdentity
+	0,  // 13: legion.agent.v1.CheckCapabilityRequest.capability:type_name -> legion.agent.v1.Capability
+	12, // 14: legion.agent.v1.CheckCapabilityRequest.requested_window:type_name -> legion.risk.v1.FeatureWindow
+	5,  // 15: legion.agent.v1.CheckToolCapabilityRequest.identity:type_name -> legion.agent.v1.AgentIdentity
+	1,  // 16: legion.agent.v1.CheckCapabilityResponse.verdict:type_name -> legion.agent.v1.CapabilityVerdict
+	1,  // 17: legion.agent.v1.CheckToolCapabilityResponse.verdict:type_name -> legion.agent.v1.CapabilityVerdict
+	8,  // 18: legion.agent.v1.CapabilityRuntimeService.CheckCapability:input_type -> legion.agent.v1.CheckCapabilityRequest
+	9,  // 19: legion.agent.v1.CapabilityRuntimeService.CheckToolCapability:input_type -> legion.agent.v1.CheckToolCapabilityRequest
+	10, // 20: legion.agent.v1.CapabilityRuntimeService.CheckCapability:output_type -> legion.agent.v1.CheckCapabilityResponse
+	11, // 21: legion.agent.v1.CapabilityRuntimeService.CheckToolCapability:output_type -> legion.agent.v1.CheckToolCapabilityResponse
+	20, // [20:22] is the sub-list for method output_type
+	18, // [18:20] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_legion_agent_v1_capability_proto_init() }
@@ -623,9 +990,9 @@ func file_legion_agent_v1_capability_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_legion_agent_v1_capability_proto_rawDesc), len(file_legion_agent_v1_capability_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   5,
+			NumMessages:   10,
 			NumExtensions: 0,
-			NumServices:   0,
+			NumServices:   1,
 		},
 		GoTypes:           file_legion_agent_v1_capability_proto_goTypes,
 		DependencyIndexes: file_legion_agent_v1_capability_proto_depIdxs,

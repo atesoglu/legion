@@ -13,10 +13,12 @@ import (
 )
 
 // startPipelineWithInvestigation is startPipeline plus the investigation
-// plane (ADR-017): a real PostgreSQL store (shared with lineage, per ADR-017
-// section 1.4 -- "may share a Postgres instance initially"), a separate
-// in-process Redis for the task queue, and the controller and worker
-// processes wired to both.
+// plane (ADR-017) and the capability runtime (ADR-005): a real PostgreSQL
+// store (shared with lineage, per ADR-017 section 1.4 -- "may share a
+// Postgres instance initially"), a separate in-process Redis for the task
+// queue, and the controller, worker and capability processes wired
+// together. Every mocked tool call the worker makes now goes through a real
+// CheckToolCapability round trip, not a stub.
 func startPipelineWithInvestigation(t *testing.T, history []storedFeature) (*harness, string) {
 	t.Helper()
 
@@ -46,6 +48,8 @@ func startPipelineWithInvestigation(t *testing.T, history []storedFeature) (*har
 		"LEGION_IDEMPOTENCY_STORE=" + dedupStore,
 	})
 
+	capability := h.startGo("control-plane/capability", "capability", nil)
+
 	h.startInvestigationService("investigation/controller", "investigation-controller", []string{
 		"LEGION_INVESTIGATION_STORE=" + dsn,
 		"LEGION_INVESTIGATION_QUEUE=" + investigationQueue,
@@ -53,6 +57,7 @@ func startPipelineWithInvestigation(t *testing.T, history []storedFeature) (*har
 	h.startInvestigationService("investigation/worker", "investigation-worker", []string{
 		"LEGION_INVESTIGATION_STORE=" + dsn,
 		"LEGION_INVESTIGATION_QUEUE=" + investigationQueue,
+		"LEGION_CAPABILITY_RUNTIME=" + capability,
 	})
 
 	h.waitReady()
