@@ -25,6 +25,8 @@ them.
 | Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
 | Decision lineage | Constructed on every evaluation and persisted to PostgreSQL (ADR-007); returned inline only when `options.include_lineage` is set |
+| Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
+| Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for one seeded, mocked agent (ADR-017); capability runtime, `RegisterAgent` API and real tool/model calls not implemented |
 | Behavioural agent, capability runtime, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
@@ -106,9 +108,10 @@ control-plane/    Zone 2 · Go
 data-plane/       Zone 3 · Rust · four deployed processes
   sentinel/       aggregation, policy, decision authority
   engines/        velocity/ device/ geo/ — one process each
-investigation/    Zone 6 · Go · async case management, planned (ADR-017)
+investigation/    Zone 6 · Go · async case management (ADR-017)
   controller/     case creation, agent selection, finding aggregation
   worker/         generic worker: loads an agent, runs its tools/model
+  internal/       store (Postgres) and queue (Redis Streams), zone-private
 crates/           Rust · shared libraries
   common/         value types with enforced invariants
   engine/         feature reading and rule assessment
@@ -126,10 +129,12 @@ Component-private code lives under `<component>/internal/`, which makes a
 cross-component import of private code a compile error ([ADR-015](docs/adr/ADR-015-component-private-packages.md)).
 
 Directories for later phases are absent until they contain something. An empty
-directory that promises work is worse than no directory. `investigation/` is
-listed above because it is now an accepted decision (ADR-017), not because it
-exists yet — the same convention `agents/` already followed for the
-behavioural agent.
+directory that promises work is worse than no directory. `investigation/` runs
+end to end (case, investigation, task, mocked finding), with one seeded agent
+and no capability runtime or real model behind it yet — see
+[README status table](#status-phase-1--deterministic-decision-path) and
+[architecture.md](docs/architecture.md) §9 for exactly what that does and does
+not mean. `agents/` (Zone 4) remains absent: nothing exists there yet.
 
 ## Building
 
@@ -162,7 +167,7 @@ Restructured 2026-09-16 to fold in an investigation/case-management scope
 |---|---|---|
 | 0 | Architecture, contracts, threat model, ADRs | **Complete** |
 | 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
-| 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | In progress — transaction idempotency (ADR-019) shipped |
+| 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | In progress — transaction idempotency (ADR-019) and the investigation plane's case/task/worker loop (ADR-017) shipped; capability runtime and `RegisterAgent` API not started |
 | 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
 | 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | Not started |
 | 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |

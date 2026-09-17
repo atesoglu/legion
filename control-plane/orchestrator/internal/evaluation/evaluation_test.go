@@ -18,6 +18,7 @@ import (
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	commonv1 "github.com/atesoglu/legion/protocol/gen/go/legion/common/v1"
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
+	investigationv1 "github.com/atesoglu/legion/protocol/gen/go/legion/investigation/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
@@ -51,9 +52,10 @@ func (f *fakeAgent) Evaluate(ctx context.Context, in *agentv1.EvaluateRequest) (
 }
 
 type fakeSentinel struct {
-	seen    []*riskv1.AgentEvaluation
-	degrade bool
-	err     error
+	seen     []*riskv1.AgentEvaluation
+	degrade  bool
+	err      error
+	decision riskv1.Decision
 }
 
 func (f *fakeSentinel) Decide(_ context.Context, in *dataplanev1.DecideRequest) (*dataplanev1.DecideResponse, error) {
@@ -62,9 +64,13 @@ func (f *fakeSentinel) Decide(_ context.Context, in *dataplanev1.DecideRequest) 
 	}
 	f.seen = in.GetEvaluations()
 	f.degrade = in.GetFeatureStoreDegraded()
+	decision := f.decision
+	if decision == riskv1.Decision_DECISION_UNSPECIFIED {
+		decision = riskv1.Decision_DECISION_ALLOW
+	}
 	return &dataplanev1.DecideResponse{
 		Result: &dataplanev1.DecideResponse_Outcome{
-			Outcome: &riskv1.DecisionOutcome{Decision: riskv1.Decision_DECISION_ALLOW},
+			Outcome: &riskv1.DecisionOutcome{Decision: decision},
 		},
 	}, nil
 }
@@ -113,6 +119,23 @@ func (f *fakeLineageStore) entries() []*riskv1.DecisionLineage {
 	return append([]*riskv1.DecisionLineage(nil), f.recorded...)
 }
 
+type fakeCaseTriggerPublisher struct {
+	mu        sync.Mutex
+	published []*investigationv1.CaseTrigger
+}
+
+func (f *fakeCaseTriggerPublisher) Publish(trigger *investigationv1.CaseTrigger) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.published = append(f.published, trigger)
+}
+
+func (f *fakeCaseTriggerPublisher) triggers() []*investigationv1.CaseTrigger {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]*investigationv1.CaseTrigger(nil), f.published...)
+}
+
 func subject() *riskv1.Transaction {
 	return &riskv1.Transaction{
 		Account: &riskv1.Account{Id: &commonv1.PseudonymousId{Value: "acct-1"}},
@@ -150,6 +173,7 @@ func coordinatorWithStore(
 		Sentinel:        sentinel,
 		Store:           store,
 		Lineage:         &fakeLineageStore{},
+		CaseTriggers:    &fakeCaseTriggerPublisher{},
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker:         breaker.Default(),
 	})
@@ -169,11 +193,12 @@ func healthy() map[string]AgentClient {
 
 func TestNewRefusesARegisteredAgentWithNoClient(t *testing.T) {
 	_, err := New(Options{
-		Registry: agents(),
-		Clients:  map[string]AgentClient{"velocity": &fakeAgent{}},
-		Sentinel: &fakeSentinel{},
-		Store:    &fakeStore{},
-		Lineage:  &fakeLineageStore{},
+		Registry:     agents(),
+		Clients:      map[string]AgentClient{"velocity": &fakeAgent{}},
+		Sentinel:     &fakeSentinel{},
+		Store:        &fakeStore{},
+		Lineage:      &fakeLineageStore{},
+		CaseTriggers: &fakeCaseTriggerPublisher{},
 	})
 	if err == nil {
 		t.Fatal("New accepted a registry it could not serve")
@@ -182,10 +207,11 @@ func TestNewRefusesARegisteredAgentWithNoClient(t *testing.T) {
 
 func TestNewRefusesToRunWithoutAFeatureStore(t *testing.T) {
 	_, err := New(Options{
-		Registry: agents(),
-		Clients:  healthy(),
-		Sentinel: &fakeSentinel{},
-		Lineage:  &fakeLineageStore{},
+		Registry:     agents(),
+		Clients:      healthy(),
+		Sentinel:     &fakeSentinel{},
+		Lineage:      &fakeLineageStore{},
+		CaseTriggers: &fakeCaseTriggerPublisher{},
 	})
 	if err == nil {
 		t.Fatal("New accepted a coordinator with no feature store")
@@ -194,13 +220,27 @@ func TestNewRefusesToRunWithoutAFeatureStore(t *testing.T) {
 
 func TestNewRefusesToRunWithoutALineageStore(t *testing.T) {
 	_, err := New(Options{
+		Registry:     agents(),
+		Clients:      healthy(),
+		Sentinel:     &fakeSentinel{},
+		Store:        &fakeStore{},
+		CaseTriggers: &fakeCaseTriggerPublisher{},
+	})
+	if err == nil {
+		t.Fatal("New accepted a coordinator with no lineage store")
+	}
+}
+
+func TestNewRefusesToRunWithoutACaseTriggerPublisher(t *testing.T) {
+	_, err := New(Options{
 		Registry: agents(),
 		Clients:  healthy(),
 		Sentinel: &fakeSentinel{},
 		Store:    &fakeStore{},
+		Lineage:  &fakeLineageStore{},
 	})
 	if err == nil {
-		t.Fatal("New accepted a coordinator with no lineage store")
+		t.Fatal("New accepted a coordinator with no case trigger publisher")
 	}
 }
 
@@ -296,6 +336,7 @@ func TestAnOpenBreakerSkipsTheCallEntirely(t *testing.T) {
 		Sentinel:        &fakeSentinel{},
 		Store:           &fakeStore{},
 		Lineage:         &fakeLineageStore{},
+		CaseTriggers:    &fakeCaseTriggerPublisher{},
 		RequestDeadline: 80 * time.Millisecond,
 		Breaker: breaker.Config{
 			MinimumRequests: 2,
@@ -563,5 +604,36 @@ func TestLineageIsRecordedEvenWhenNotReturnedInline(t *testing.T) {
 	}
 	if len(c.lineage.(*fakeLineageStore).entries()) != 1 {
 		t.Fatal("lineage was returned but not persisted")
+	}
+}
+
+func TestAReviewDecisionPublishesACaseTrigger(t *testing.T) {
+	sentinel := &fakeSentinel{decision: riskv1.Decision_DECISION_REVIEW}
+	c := coordinator(t, healthy(), sentinel)
+
+	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	triggers := c.caseTriggers.(*fakeCaseTriggerPublisher).triggers()
+	if len(triggers) != 1 {
+		t.Fatalf("case triggers published = %d, want 1", len(triggers))
+	}
+	if got := triggers[0].GetDecisionId(); got != lineage.GetDecisionId() {
+		t.Fatalf("trigger decision_id = %q, want %q", got, lineage.GetDecisionId())
+	}
+}
+
+func TestAnAllowDecisionPublishesNoCaseTrigger(t *testing.T) {
+	sentinel := &fakeSentinel{decision: riskv1.Decision_DECISION_ALLOW}
+	c := coordinator(t, healthy(), sentinel)
+
+	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if triggers := c.caseTriggers.(*fakeCaseTriggerPublisher).triggers(); len(triggers) != 0 {
+		t.Fatalf("case triggers published = %d, want 0 for an ALLOW decision", len(triggers))
 	}
 }

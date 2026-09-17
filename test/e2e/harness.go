@@ -211,6 +211,29 @@ func (h *harness) startDedupStore() string {
 	return server.Addr()
 }
 
+// startInvestigationQueue runs a third, independent in-process Redis for the
+// investigation plane's task queue (ADR-017 section 3) — separate again from
+// both the feature store and the gateway's dedup store, for the same
+// isolation reasoning.
+func (h *harness) startInvestigationQueue() string {
+	h.t.Helper()
+
+	server := miniredis.RunT(h.t)
+	h.endpoints["investigation-queue"] = server.Addr()
+	return server.Addr()
+}
+
+// startInvestigationService builds and starts an investigation-plane binary
+// that has no gRPC listener of its own (the controller and worker are pure
+// queue consumers). Unlike startGo, it is not registered in h.endpoints:
+// there is no port for waitReady to dial, and readiness is instead proven by
+// polling Postgres for the state the service is expected to produce.
+func (h *harness) startInvestigationService(pkg, service string, env []string) {
+	h.t.Helper()
+	binary := h.buildGo(pkg, service)
+	h.spawn(service, binary, nil, env)
+}
+
 // startLineageStore runs a real PostgreSQL container, so lineage persistence
 // is exercised exactly as it is in a deployment (ADR-007). Unlike the feature
 // store, there is no pure-Go in-process stand-in for Postgres; this is why

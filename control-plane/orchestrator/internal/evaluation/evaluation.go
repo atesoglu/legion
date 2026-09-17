@@ -27,6 +27,7 @@ import (
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	commonv1 "github.com/atesoglu/legion/protocol/gen/go/legion/common/v1"
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
+	investigationv1 "github.com/atesoglu/legion/protocol/gen/go/legion/investigation/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
@@ -55,16 +56,26 @@ type LineageStore interface {
 	Record(entry *riskv1.DecisionLineage)
 }
 
+// CaseTriggerPublisher notifies the investigation plane of a REVIEW decision
+// (ADR-017 section 1.3). Like LineageStore, it is consulted only after the
+// sentinel has already answered; a slow or down investigation queue degrades
+// case creation, never the decision. See
+// control-plane/orchestrator/internal/casetrigger.
+type CaseTriggerPublisher interface {
+	Publish(trigger *investigationv1.CaseTrigger)
+}
+
 // Coordinator runs evaluations against a configured agent set.
 type Coordinator struct {
-	registry *registry.Registry
-	clients  map[string]AgentClient
-	breakers map[string]*breaker.Breaker
-	sentinel SentinelClient
-	store    features.Store
-	lineage  LineageStore
-	plan     budget.Plan
-	fallback time.Duration
+	registry     *registry.Registry
+	clients      map[string]AgentClient
+	breakers     map[string]*breaker.Breaker
+	sentinel     SentinelClient
+	store        features.Store
+	lineage      LineageStore
+	caseTriggers CaseTriggerPublisher
+	plan         budget.Plan
+	fallback     time.Duration
 }
 
 // Options configures a Coordinator.
@@ -84,6 +95,10 @@ type Options struct {
 
 	// Lineage persists every evaluation's DecisionLineage (ADR-007, ADR-013).
 	Lineage LineageStore
+
+	// CaseTriggers notifies the investigation plane of a REVIEW decision
+	// (ADR-017 section 1.3).
+	CaseTriggers CaseTriggerPublisher
 
 	// Plan is the budget apportionment. Zero values take the documented default.
 	Plan budget.Plan
@@ -113,6 +128,9 @@ func New(options Options) (*Coordinator, error) {
 	if options.Lineage == nil {
 		return nil, status.Error(codes.FailedPrecondition, "evaluation: no lineage store configured")
 	}
+	if options.CaseTriggers == nil {
+		return nil, status.Error(codes.FailedPrecondition, "evaluation: no case trigger publisher configured")
+	}
 
 	breakers := make(map[string]*breaker.Breaker)
 	for _, agent := range options.Registry.Agents() {
@@ -129,14 +147,15 @@ func New(options Options) (*Coordinator, error) {
 	}
 
 	return &Coordinator{
-		registry: options.Registry,
-		clients:  options.Clients,
-		breakers: breakers,
-		sentinel: options.Sentinel,
-		store:    options.Store,
-		lineage:  options.Lineage,
-		plan:     plan,
-		fallback: options.RequestDeadline,
+		registry:     options.Registry,
+		clients:      options.Clients,
+		breakers:     breakers,
+		sentinel:     options.Sentinel,
+		store:        options.Store,
+		lineage:      options.Lineage,
+		caseTriggers: options.CaseTriggers,
+		plan:         plan,
+		fallback:     options.RequestDeadline,
 	}, nil
 }
 
@@ -208,6 +227,17 @@ func (c *Coordinator) Evaluate(
 		},
 	})
 	c.lineage.Record(entry)
+
+	// Off the critical path, same as lineage: the request has already been
+	// decided, and a down investigation queue must not be able to affect it.
+	if outcome.GetDecision() == riskv1.Decision_DECISION_REVIEW {
+		c.caseTriggers.Publish(&investigationv1.CaseTrigger{
+			DecisionId:     evaluationID,
+			TransactionId:  subject.GetId(),
+			Outcome:        outcome,
+			IdempotencyKey: subject.GetIdempotencyKey(),
+		})
+	}
 
 	return outcome, entry, nil
 }

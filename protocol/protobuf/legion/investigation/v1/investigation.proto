@@ -1,0 +1,188 @@
+// Zone 6: the investigation plane (ADR-017).
+//
+// Everything in this package is asynchronous and lives off the 80ms decision
+// path (ADR-009). The one exception is CaseTrigger's producer: the
+// orchestrator's off-critical-path lineage writer constructs and publishes it,
+// but the request-handling goroutine that produced a decision never waits on
+// anything in this package.
+//
+// The investigation controller and worker have no type here they can populate
+// with a Decision. That authority stays with the sentinel (ADR-004); Zone 6
+// can recommend that a human revisit a case, never reverse the decision that
+// opened it.
+syntax = "proto3";
+
+package legion.investigation.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "legion/common/v1/types.proto";
+import "legion/risk/v1/decision.proto";
+
+// CaseStatus is a Case's lifecycle state (investigation-model.md §4).
+enum CaseStatus {
+  CASE_STATUS_UNSPECIFIED = 0;
+  CASE_STATUS_OPEN = 1;
+  CASE_STATUS_INVESTIGATING = 2;
+  CASE_STATUS_WAITING = 3;
+  CASE_STATUS_COMPLETED = 4;
+  CASE_STATUS_ESCALATED = 5;
+  CASE_STATUS_CLOSED = 6;
+}
+
+// InvestigationStatus is one attempt's lifecycle state.
+enum InvestigationStatus {
+  INVESTIGATION_STATUS_UNSPECIFIED = 0;
+  INVESTIGATION_STATUS_RUNNING = 1;
+  INVESTIGATION_STATUS_COMPLETED = 2;
+  INVESTIGATION_STATUS_FAILED = 3;
+}
+
+// TaskStatus is the state Postgres holds as the source of truth for a task
+// (ADR-017 §3); the queue is delivery only and never authoritative for this.
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_WAITING = 3;
+  TASK_STATUS_RETRYING = 4;
+  TASK_STATUS_COMPLETED = 5;
+  TASK_STATUS_FAILED = 6;
+  TASK_STATUS_DEAD_LETTER = 7;
+}
+
+// ToolExecutionStatus records whether a tool call ran, failed, or was refused
+// by the capability boundary (ADR-005) before it ran at all.
+enum ToolExecutionStatus {
+  TOOL_EXECUTION_STATUS_UNSPECIFIED = 0;
+  TOOL_EXECUTION_STATUS_SUCCEEDED = 1;
+  TOOL_EXECUTION_STATUS_FAILED = 2;
+  TOOL_EXECUTION_STATUS_DENIED = 3;
+}
+
+// CaseTrigger is published by the orchestrator's lineage writer whenever
+// DecisionOutcome.decision == REVIEW (ADR-017 §1.3). It is the only message
+// in this package the synchronous decision path constructs.
+message CaseTrigger {
+  string decision_id = 1;
+  legion.common.v1.PseudonymousId transaction_id = 2;
+  legion.risk.v1.DecisionOutcome outcome = 3;
+
+  // ADR-019: the same key the gateway deduplicated the original request on,
+  // reused so that the queue's at-least-once delivery cannot open two cases
+  // for one transaction. Scoped to idempotency_key alone, not (caller_id,
+  // idempotency_key): the orchestrator's request contract carries no caller
+  // identity today (the gateway does not forward it), so two different
+  // callers reusing the same key would collide into one case. Documented as
+  // a known gap rather than worked around with plumbing nothing asked for.
+  string idempotency_key = 4;
+}
+
+// Case is one investigable unit, opened for a transaction that reached
+// REVIEW (or was explicitly escalated).
+message Case {
+  string case_id = 1;
+  string decision_id = 2;
+  legion.common.v1.PseudonymousId transaction_id = 3;
+  string idempotency_key = 4;
+  CaseStatus status = 5;
+  uint32 priority = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// Investigation is one attempt at investigating a Case. A case may have more
+// than one over time.
+message Investigation {
+  string investigation_id = 1;
+  string case_id = 2;
+  InvestigationStatus status = 3;
+  repeated string activated_agent_ids = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp completed_at = 6;
+}
+
+// AgentDefinition is a registered logical agent (ADR-017 §2). The three
+// deterministic Rust engines are never rows here; they stay on the static,
+// startup-parsed registry (registry.Registry, ADR-014) because each is its
+// own deployable consulted inside the 80ms budget.
+message AgentDefinition {
+  string agent_id = 1;
+  legion.common.v1.Version version = 2;
+  string name = 3;
+  string description = 4;
+  string system_prompt = 5;
+  repeated string allowed_tools = 6;
+  google.protobuf.Struct model_policy = 7;
+  google.protobuf.Struct configuration = 8;
+  bool enabled = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+// Task is one agent invocation within an investigation. This is also the
+// envelope published to the investigation.tasks stream (ADR-017 §3); a
+// worker loads everything else it needs by task_id from Postgres.
+message Task {
+  string task_id = 1;
+  string investigation_id = 2;
+  string agent_id = 3;
+  TaskStatus status = 4;
+  uint32 attempt = 5;
+  uint32 max_attempts = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+// ToolExecution is one tool call a worker made on an agent's behalf —
+// auditability of what actually happened, independent of what the agent
+// concluded from it.
+message ToolExecution {
+  string tool_execution_id = 1;
+  string task_id = 2;
+  string tool_name = 3;
+  google.protobuf.Struct arguments = 4;
+  google.protobuf.Struct result = 5;
+  ToolExecutionStatus status = 6;
+  google.protobuf.Duration duration = 7;
+  google.protobuf.Timestamp executed_at = 8;
+}
+
+// Evidence is a fact gathered during investigation. It exists independently
+// of any agent's interpretation of it (investigation-model.md §3).
+message Evidence {
+  string evidence_id = 1;
+  string investigation_id = 2;
+  string source = 3;
+  google.protobuf.Struct content = 4;
+  google.protobuf.Timestamp collected_at = 5;
+}
+
+// AgentFinding is one agent's observation, hypothesis and confidence,
+// referencing the evidence it is based on — never the other way around.
+message AgentFinding {
+  string finding_id = 1;
+  string task_id = 2;
+  string agent_id = 3;
+  repeated string evidence_ids = 4;
+  string observation = 5;
+  string hypothesis = 6;
+
+  // Self-reported in [0, 100], the same convention as RiskSignal. Not
+  // validated against ground truth until Phase 5's evaluation framework.
+  uint32 confidence = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// InvestigationAuditEvent is an append-only record of what happened, when,
+// to what — the Zone 6 analogue of an operational log, retained for audit.
+message InvestigationAuditEvent {
+  string event_id = 1;
+  string case_id = 2;
+
+  // From a closed set: CASE_CREATED, INVESTIGATION_STARTED, TASK_CREATED,
+  // TASK_STARTED, TASK_COMPLETED, TASK_FAILED, INVESTIGATION_COMPLETED.
+  string event_type = 3;
+  google.protobuf.Struct detail = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+}

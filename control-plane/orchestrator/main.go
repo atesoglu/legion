@@ -32,6 +32,7 @@ import (
 
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/breaker"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
+	"github.com/atesoglu/legion/control-plane/orchestrator/internal/casetrigger"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/evaluation"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/lineage"
@@ -49,6 +50,11 @@ const (
 	defaultSentinelAddress = "127.0.0.1:9600"
 	defaultFeatureStore    = "127.0.0.1:6379"
 	defaultLineageStore    = "postgres://legion:legion@127.0.0.1:5432/legion?sslmode=disable"
+
+	// defaultInvestigationQueue is a separate Redis instance from the feature
+	// store (ADR-017 section 3), so investigation load can never degrade the
+	// synchronous decision path's feature reads.
+	defaultInvestigationQueue = "127.0.0.1:6381"
 
 	// How long startup waits for dependencies to become reachable before
 	// serving anyway.
@@ -164,12 +170,27 @@ func main() {
 	}
 	defer lineageStore.Close()
 
+	// A separate Redis instance from the feature store (ADR-017 section 3).
+	// Like the lineage writer it feeds, a down investigation queue must not
+	// block startup or slow a decision; it degrades case creation instead.
+	investigationQueueClient := redis.NewClient(&redis.Options{
+		Addr: envOr("LEGION_INVESTIGATION_QUEUE", defaultInvestigationQueue),
+	})
+	caseTriggers := casetrigger.New(investigationQueueClient, log)
+	defer func() {
+		caseTriggers.Close()
+		if err := investigationQueueClient.Close(); err != nil {
+			log.Warn("investigation queue close failed", "error", err)
+		}
+	}()
+
 	coordinator, err := evaluation.New(evaluation.Options{
 		Registry:        agents,
 		Clients:         clients,
 		Sentinel:        sentinelClient{client: dataplanev1.NewSentinelServiceClient(sentinelConn)},
 		Store:           features.NewRedisStore(redisClient),
 		Lineage:         lineageStore,
+		CaseTriggers:    caseTriggers,
 		Plan:            budget.Default(),
 		RequestDeadline: cfg.RequestDeadline,
 		Breaker:         breaker.Default(),

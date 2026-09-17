@@ -244,9 +244,11 @@ legion/
 │       ├── velocity/
 │       ├── device/
 │       └── geo/
-├── investigation/        Zone 6 · Go · async case management (ADR-017, planned)
+├── investigation/        Zone 6 · Go · async case management (ADR-017)
 │   ├── controller/       case creation, agent selection, finding aggregation
-│   └── worker/           generic worker: loads an agent, runs its tools/model
+│   ├── worker/           generic worker: loads an agent, runs its tools/model
+│   └── internal/         store (Postgres) and queue (Redis Streams), shared
+│                         within the zone only (ADR-015)
 ├── crates/               Rust · shared libraries, no deployables
 │   ├── common/           value types with enforced invariants
 │   ├── platform/         config and process lifecycle
@@ -290,7 +292,7 @@ keeps one lockfile and — more importantly — one definition of the lint polic
 that forbids `unsafe` and denies `unwrap` on the decision path.
 
 Zone 4 will be `agents/`, holding the behavioural agent and the inference
-runtime. Zone 6 will be `investigation/` (ADR-017), holding the investigation
+runtime. Zone 6 is `investigation/` (ADR-017), holding the investigation
 controller and the generic worker — async, and never a dependency of the
 synchronous decision path. Directories from the long-term plan that have no
 implementation purpose yet are deliberately absent. Empty directories that
@@ -309,9 +311,22 @@ engines and the sentinel all run, and a transaction presented at the edge
 returns a decision.
 
 The following exist only as documented intent: the inference runtime, the
-behavioural agent, the capability runtime implementation, the investigation
-plane (Zone 6, ADR-017) in its entirety, Kubernetes manifests, the fraud
-simulator, the replay engine, the evaluation framework and all benchmarks.
+behavioural agent, the capability runtime implementation, Kubernetes
+manifests, the fraud simulator, the replay engine, the evaluation framework
+and all benchmarks.
+
+Zone 6 (ADR-017) is partially built, not documented intent only: the
+controller, the generic worker, the Postgres schema and the Redis Streams
+task queue all run, and a `REVIEW` decision produces a case, an
+investigation, a task and a recorded finding, proven end to end by
+`test/e2e`. What is still only documented intent inside Zone 6: the
+capability runtime it is meant to call through (nothing enforces
+`allowed_tools` yet, because nothing exists to enforce it against), the
+`RegisterAgent` API (one agent is seeded directly at controller startup
+instead), every activation rule but one (device risk only — no velocity or
+relationship rule exists because no agent needs one yet), and the shared
+inference runtime a real agent would call. The one seeded agent's tool call
+and finding are canned, deterministic output, not a model's conclusion.
 
 Four gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:

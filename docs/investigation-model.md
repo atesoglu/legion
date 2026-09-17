@@ -1,8 +1,15 @@
 # Investigation model
 
-Status: Documented intent only (ADR-017 to ADR-019). Nothing in this document
-is built. It exists so that Zone 6 is specified before it is coded, the same
-discipline `decision-model.md` held Zone 2/3 to in Phase 0.
+Status: partially built. The case → investigation → task → mocked-agent →
+evidence/finding loop described below exists in code
+(`investigation/controller`, `investigation/worker`,
+`investigation/internal/{store,queue}`), with exactly one seeded agent
+(`device_investigation_agent`) and no real tool or model call behind it —
+see §7 and §10 for what that does and does not mean. Everything else this
+document describes (the capability runtime actually gating a tool call, the
+`RegisterAgent` API, more than one activation rule, observability and cost)
+remains documented intent only, the same discipline `decision-model.md` held
+Zone 2/3 to in Phase 0.
 
 ## 1. Where this fits
 
@@ -179,6 +186,13 @@ Python function, shell command, SQL statement or network destination — it
 selects from a closed, named tool registry, and the runtime — not the model —
 decides whether the call is authorised.
 
+**Not built yet.** The capability runtime (ADR-005) this section depends on
+does not exist. `investigation/worker` today produces one canned, mocked
+"tool call" and finding per task, with no registry, no capability check and
+no model in the path at all — it proves the task/evidence/finding data model
+and lifecycle, nothing about tool authorisation. This section describes what
+must be true before a real investigation agent runs, not what runs today.
+
 ## 8. Observability and cost
 
 Deferred to Phase 4 in sequencing, specified now so it is not lost in the
@@ -210,9 +224,20 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
 
 - It does not claim the rule-based activation strategy is good triage. It is
   a starting point, evaluated the same way risk-scoring thresholds are
-  (Phase 5).
+  (Phase 5). Only one rule exists today (device score over a threshold),
+  because only one agent is seeded; it is not a claim that device risk is
+  the only signal worth investigating.
 - It does not claim an investigation agent's hypothesis is correct. Confidence
   is self-reported, exactly as it is for a `RiskSignal`, and is not validated
-  against ground truth until Phase 5's evaluation framework exists.
+  against ground truth until Phase 5's evaluation framework exists. Today it
+  is not even a real hypothesis: the one seeded agent's finding is canned
+  output, not a model's conclusion.
 - It does not claim this replaces a human analyst. The investigation result
   is evidence for one, not a replacement of one.
+- It does not claim tool access is authorised or audited in any enforced
+  sense yet — see §7's note that the capability runtime does not exist.
+- It does not claim case creation is safe from duplication across callers.
+  A case is deduplicated on `idempotency_key` alone (see `CaseTrigger`'s
+  proto comment), not `(caller, idempotency_key)` as the gateway's own dedup
+  is; two different callers reusing the same key would collide into one
+  case. This is a known, accepted gap, not an oversight discovered later.

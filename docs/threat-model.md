@@ -305,6 +305,17 @@ exfiltrate data gathered during a case.
   investigation agent cannot alter a `Decision`, cannot write evidence
   bypassing the evidence/finding distinction (§3 of `investigation-model.md`),
   and its findings are always attributed and timestamped.
+
+  **Not yet enforced.** The capability runtime (ADR-005) that this mitigation
+  depends on does not exist yet — it was deliberately deferred behind the
+  investigation plane's first slice, since nothing called it. The one
+  investigation agent that exists today (`investigation/worker`) does not
+  call a real tool registry or model at all: its "tool call" and "finding"
+  are canned, deterministic output, with no capability check anywhere in the
+  path, because there is nothing yet to check against. This is a real,
+  current gap, not a hypothetical one — it closes once the capability
+  runtime ships and the worker is wired through it, in that order, before
+  any agent with real tool access exists.
 - **Detection.** Tool-call audit trail; finding-to-evidence reference
   completeness (a finding with no cited evidence is itself a signal);
   per-agent confidence distribution monitored the same way per-agent score
