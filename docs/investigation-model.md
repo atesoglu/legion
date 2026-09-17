@@ -3,13 +3,13 @@
 Status: partially built. The case → investigation → task → mocked-agent →
 evidence/finding loop described below exists in code
 (`investigation/controller`, `investigation/worker`,
-`investigation/internal/{store,queue}`), with exactly one seeded agent
-(`device_investigation_agent`) and no real tool or model call behind it —
-see §7 and §10 for what that does and does not mean. Everything else this
-document describes (the capability runtime actually gating a tool call, the
-`RegisterAgent` API, more than one activation rule, observability and cost)
-remains documented intent only, the same discipline `decision-model.md` held
-Zone 2/3 to in Phase 0.
+`investigation/internal/{store,queue}`), with two seeded agents
+(`device_investigation_agent`, `velocity_investigation_agent`) and no real
+tool or model call behind either — see §7 and §10 for what that does and
+does not mean. Everything else this document describes (the capability
+runtime actually gating a tool call, the `RegisterAgent` API, a relationship
+rule/agent, observability and cost) remains documented intent only, the
+same discipline `decision-model.md` held Zone 2/3 to in Phase 0.
 
 ## 1. Where this fits
 
@@ -224,14 +224,15 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
 
 - It does not claim the rule-based activation strategy is good triage. It is
   a starting point, evaluated the same way risk-scoring thresholds are
-  (Phase 5). Only one rule exists today (device score over a threshold),
-  because only one agent is seeded; it is not a claim that device risk is
-  the only signal worth investigating.
+  (Phase 5). Two rules exist today (device and velocity score over a
+  threshold), one per seeded agent; no relationship rule exists because no
+  relationship investigation agent is seeded.
 - It does not claim an investigation agent's hypothesis is correct. Confidence
   is self-reported, exactly as it is for a `RiskSignal`, and is not validated
   against ground truth until Phase 5's evaluation framework exists. Today it
-  is not even a real hypothesis: the one seeded agent's finding is canned
-  output, not a model's conclusion.
+  is not even a real hypothesis: both seeded agents' findings are canned
+  output, read from their `AgentDefinition.configuration`, not a model's
+  conclusion.
 - It does not claim this replaces a human analyst. The investigation result
   is evidence for one, not a replacement of one.
 - It does not claim tool access is authorised or audited in any enforced

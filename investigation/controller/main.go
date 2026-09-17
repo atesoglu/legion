@@ -42,13 +42,16 @@ const (
 	readCount    = 10
 	readBlock    = 2 * time.Second
 
-	// deviceRiskThreshold is the only activation rule this first cut
-	// implements (ADR-017 section 45.1 gives device/velocity/relationship as
-	// examples; only the device investigation agent is seeded so far, see
-	// seedAgents below, so only its rule exists).
-	deviceRiskThreshold = 50
+	// deviceRiskThreshold and velocityRiskThreshold are the two activation
+	// rules this cut implements (ADR-017 section 45.1 also gives a
+	// relationship rule as an example; no relationship investigation agent is
+	// seeded, so no such rule exists yet). One rule per seeded agent, see
+	// seedAgents below.
+	deviceRiskThreshold   = 50
+	velocityRiskThreshold = 50
 
-	deviceInvestigationAgent = "device_investigation_agent"
+	deviceInvestigationAgent   = "device_investigation_agent"
+	velocityInvestigationAgent = "velocity_investigation_agent"
 
 	defaultMaxAttempts = 3
 )
@@ -110,23 +113,56 @@ func main() {
 	}
 }
 
-// seedAgents registers the first investigation agent.
+// seedAgents registers the investigation agents this cut ships.
 //
 // ADR-017 section 2 describes a RegisterAgent API; it is not built yet, and
 // nothing else needs it, so this stands in for it. See
-// docs/investigation-model.md and the commit that introduced this package.
+// docs/investigation-model.md and the commit that introduced this package
+// for that gap.
+//
+// Each agent's Configuration carries its mocked tool result and finding
+// text (investigation/worker reads it generically) so that no worker code
+// branches on agent_id to decide what to say for which agent (ADR-014).
 func seedAgents(ctx context.Context, st *store.Store, log *slog.Logger) {
-	err := st.SeedAgent(ctx, store.AgentDefinition{
-		AgentID:      deviceInvestigationAgent,
-		Version:      "v1",
-		Name:         "Device investigation agent",
-		Description:  "Investigates device-risk-driven REVIEW cases.",
-		SystemPrompt: "not used yet: this agent's inference call is mocked (Phase 3 has no shared inference runtime yet)",
-		AllowedTools: []string{"lookup_device_history"},
-		Enabled:      true,
-	})
-	if err != nil {
-		log.Warn("seeding the device investigation agent failed", "error", err)
+	agents := []store.AgentDefinition{
+		{
+			AgentID:      deviceInvestigationAgent,
+			Version:      "v1",
+			Name:         "Device investigation agent",
+			Description:  "Investigates device-risk-driven REVIEW cases.",
+			SystemPrompt: "not used yet: this agent's inference call is mocked (Phase 3 has no shared inference runtime yet)",
+			AllowedTools: []string{"lookup_device_history"},
+			Configuration: map[string]any{
+				"result_key":   "device_history",
+				"result_value": "no prior fraud reports on file",
+				"observation":  "Device history shows no prior fraud reports.",
+				"hypothesis":   "The elevated device-risk signal is not corroborated by device history.",
+				"confidence":   40,
+			},
+			Enabled: true,
+		},
+		{
+			AgentID:      velocityInvestigationAgent,
+			Version:      "v1",
+			Name:         "Velocity investigation agent",
+			Description:  "Investigates velocity-risk-driven REVIEW cases.",
+			SystemPrompt: "not used yet: this agent's inference call is mocked (Phase 3 has no shared inference runtime yet)",
+			AllowedTools: []string{"lookup_transaction_velocity"},
+			Configuration: map[string]any{
+				"result_key":   "velocity_history",
+				"result_value": "burst of authorisations in the last 5 minutes matches a card-testing pattern",
+				"observation":  "Recent transaction velocity shows a burst of small authorisations.",
+				"hypothesis":   "The velocity signal is consistent with card testing rather than a false positive.",
+				"confidence":   65,
+			},
+			Enabled: true,
+		},
+	}
+
+	for _, agent := range agents {
+		if err := st.SeedAgent(ctx, agent); err != nil {
+			log.Warn("seeding an investigation agent failed", "agent_id", agent.AgentID, "error", err)
+		}
 	}
 }
 
@@ -202,14 +238,20 @@ func handleTrigger(ctx context.Context, st *store.Store, tasks *queue.Stream, pa
 }
 
 // activateAgents is the rule-based selection ADR-017 section 45.1
-// describes. Only the device rule exists because only the device
-// investigation agent is seeded so far; velocity/relationship rules arrive
-// with the agents they activate.
+// describes. One rule per seeded agent: device and velocity contributions
+// above their thresholds each activate their own investigation agent; a
+// relationship rule arrives with the agent it would activate.
 func activateAgents(outcome *riskv1.DecisionOutcome) []string {
 	var activated []string
 	for _, contribution := range outcome.GetContributions() {
-		if contribution.GetAgentId() == "device" && contribution.GetIncluded() && contribution.GetScore() > deviceRiskThreshold {
+		if !contribution.GetIncluded() {
+			continue
+		}
+		switch {
+		case contribution.GetAgentId() == "device" && contribution.GetScore() > deviceRiskThreshold:
 			activated = append(activated, deviceInvestigationAgent)
+		case contribution.GetAgentId() == "velocity" && contribution.GetScore() > velocityRiskThreshold:
+			activated = append(activated, velocityInvestigationAgent)
 		}
 	}
 	return activated

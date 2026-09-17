@@ -318,15 +318,17 @@ and all benchmarks.
 Zone 6 (ADR-017) is partially built, not documented intent only: the
 controller, the generic worker, the Postgres schema and the Redis Streams
 task queue all run, and a `REVIEW` decision produces a case, an
-investigation, a task and a recorded finding, proven end to end by
-`test/e2e`. What is still only documented intent inside Zone 6: the
-capability runtime it is meant to call through (nothing enforces
-`allowed_tools` yet, because nothing exists to enforce it against), the
-`RegisterAgent` API (one agent is seeded directly at controller startup
-instead), every activation rule but one (device risk only — no velocity or
-relationship rule exists because no agent needs one yet), and the shared
-inference runtime a real agent would call. The one seeded agent's tool call
-and finding are canned, deterministic output, not a model's conclusion.
+investigation, a task per matching activation rule, and a recorded finding
+per task, proven end to end by `test/e2e`. What is still only documented
+intent inside Zone 6: the capability runtime it is meant to call through
+(nothing enforces `allowed_tools` yet, because nothing exists to enforce it
+against), the `RegisterAgent` API (two agents are seeded directly at
+controller startup instead), the relationship activation rule (device and
+velocity both exist; no relationship investigation agent is seeded), and the
+shared inference runtime a real agent would call. Both seeded agents' tool
+calls and findings are canned, deterministic output read from their
+`AgentDefinition.configuration`, not a model's conclusion — the worker itself
+contains no agent-specific code, exactly as ADR-014 requires.
 
 Four gaps inside the parts that do exist are worth naming, because each is
 easy to mistake for working:

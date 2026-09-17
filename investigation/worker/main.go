@@ -219,19 +219,26 @@ func failTask(ctx context.Context, st *store.Store, task *store.Task, deadLetter
 	}
 }
 
-// runAgent is the mocked tool call and finding this first investigation
-// agent produces. It is deterministic and canned: there is no tool registry
-// (ADR-005's capability runtime) and no shared inference runtime (Phase 3)
-// to call yet.
+// runAgent is the mocked tool call and finding every investigation agent
+// currently produces. It is deterministic and reads its canned output from
+// agent.Configuration rather than branching on agent.AgentID (ADR-014: no
+// file may branch on an agent id) -- there is no tool registry (ADR-005's
+// capability runtime) and no shared inference runtime (Phase 3) to call yet.
 func runAgent(ctx context.Context, st *store.Store, task *store.Task, agent *store.AgentDefinition, log *slog.Logger) error {
 	started := time.Now()
-	toolName := "lookup_device_history"
+	toolName := "lookup_history"
 	if len(agent.AllowedTools) > 0 {
 		toolName = agent.AllowedTools[0]
 	}
 
+	resultKey := stringConfig(agent, "result_key", "history")
+	resultValue := stringConfig(agent, "result_value", "no history available")
+	observation := stringConfig(agent, "observation", "No observation was configured for this agent.")
+	hypothesis := stringConfig(agent, "hypothesis", "No hypothesis was configured for this agent.")
+	confidence := uint32(intConfig(agent, "confidence", 40))
+
 	arguments := map[string]any{"agent_id": agent.AgentID}
-	result := map[string]any{"device_history": "no prior fraud reports on file"}
+	result := map[string]any{resultKey: resultValue}
 	if _, err := st.InsertToolExecution(ctx, task.TaskID, toolName, arguments, result, "SUCCEEDED", time.Since(started)); err != nil {
 		return err
 	}
@@ -241,16 +248,31 @@ func runAgent(ctx context.Context, st *store.Store, task *store.Task, agent *sto
 		return err
 	}
 
-	_, err = st.InsertFinding(ctx, task.TaskID, agent.AgentID, []string{evidenceID},
-		"Device history shows no prior fraud reports.",
-		"The elevated device-risk signal is not corroborated by device history.",
-		40)
+	_, err = st.InsertFinding(ctx, task.TaskID, agent.AgentID, []string{evidenceID}, observation, hypothesis, confidence)
 	if err != nil {
 		return err
 	}
 
 	log.Info("investigation task completed", "task_id", task.TaskID, "agent_id", agent.AgentID)
 	return nil
+}
+
+// stringConfig and intConfig read agent.Configuration generically. A missing
+// or mistyped key falls back rather than failing the task: a misconfigured
+// mock is a worse test signal than a missing one, never a reason for an
+// investigation to error.
+func stringConfig(agent *store.AgentDefinition, key, fallback string) string {
+	if value, ok := agent.Configuration[key].(string); ok {
+		return value
+	}
+	return fallback
+}
+
+func intConfig(agent *store.AgentDefinition, key string, fallback int) int {
+	if value, ok := agent.Configuration[key].(float64); ok {
+		return int(value)
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {

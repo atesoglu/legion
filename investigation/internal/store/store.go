@@ -192,7 +192,13 @@ type AgentDefinition struct {
 	Description  string
 	SystemPrompt string
 	AllowedTools []string
-	Enabled      bool
+
+	// Configuration is free-form, agent-specific data (ADR-017's
+	// `configuration` jsonb column). Today it carries the mocked worker's
+	// canned tool result and finding, so that no worker code branches on
+	// agent_id (ADR-014) to decide what to say for which agent.
+	Configuration map[string]any
+	Enabled       bool
 }
 
 // SeedAgent registers an agent definition if it does not already exist.
@@ -206,14 +212,18 @@ func (s *Store) SeedAgent(ctx context.Context, def AgentDefinition) error {
 	if err != nil {
 		return fmt.Errorf("store: allowed_tools: %w", err)
 	}
+	configuration, err := marshalJSON(def.Configuration)
+	if err != nil {
+		return fmt.Errorf("store: configuration: %w", err)
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	_, err = s.pool.Exec(ctx, `
-		INSERT INTO agent_definitions (agent_id, version, name, description, system_prompt, allowed_tools, enabled)
-		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+		INSERT INTO agent_definitions (agent_id, version, name, description, system_prompt, allowed_tools, configuration, enabled)
+		VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
 		ON CONFLICT (agent_id, version) DO NOTHING`,
-		def.AgentID, def.Version, def.Name, def.Description, def.SystemPrompt, string(tools), def.Enabled)
+		def.AgentID, def.Version, def.Name, def.Description, def.SystemPrompt, string(tools), string(configuration), def.Enabled)
 	if err != nil {
 		return fmt.Errorf("store: seed agent %q: %w", def.AgentID, err)
 	}
@@ -227,17 +237,18 @@ func (s *Store) GetEnabledAgent(ctx context.Context, agentID string) (*AgentDefi
 	defer cancel()
 
 	row := s.pool.QueryRow(ctx, `
-		SELECT agent_id, version, name, description, system_prompt, allowed_tools
+		SELECT agent_id, version, name, description, system_prompt, allowed_tools, configuration
 		FROM agent_definitions
 		WHERE agent_id = $1 AND enabled
 		ORDER BY created_at DESC
 		LIMIT 1`, agentID)
 
 	var (
-		def   AgentDefinition
-		tools []byte
+		def           AgentDefinition
+		tools         []byte
+		configuration []byte
 	)
-	if err := row.Scan(&def.AgentID, &def.Version, &def.Name, &def.Description, &def.SystemPrompt, &tools); err != nil {
+	if err := row.Scan(&def.AgentID, &def.Version, &def.Name, &def.Description, &def.SystemPrompt, &tools, &configuration); err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
@@ -246,6 +257,9 @@ func (s *Store) GetEnabledAgent(ctx context.Context, agentID string) (*AgentDefi
 	def.Enabled = true
 	if err := json.Unmarshal(tools, &def.AllowedTools); err != nil {
 		return nil, fmt.Errorf("store: agent %q allowed_tools is corrupt: %w", agentID, err)
+	}
+	if err := json.Unmarshal(configuration, &def.Configuration); err != nil {
+		return nil, fmt.Errorf("store: agent %q configuration is corrupt: %w", agentID, err)
 	}
 	return &def, nil
 }

@@ -26,7 +26,7 @@ them.
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
 | Decision lineage | Constructed on every evaluation and persisted to PostgreSQL (ADR-007); returned inline only when `options.include_lineage` is set |
 | Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
-| Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for one seeded, mocked agent (ADR-017); capability runtime, `RegisterAgent` API and real tool/model calls not implemented |
+| Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017); capability runtime, `RegisterAgent` API and real tool/model calls not implemented |
 | Behavioural agent, capability runtime, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is

@@ -95,7 +95,10 @@ func caseStatus(t *testing.T, dsn, decisionID string) string {
 	}
 }
 
-func findingCount(t *testing.T, dsn, decisionID string) int {
+// findingAgentIDs returns the distinct agent_id of every finding recorded
+// for decisionID's investigation, so a test can assert which investigation
+// agents actually ran, not just how many.
+func findingAgentIDs(t *testing.T, dsn, decisionID string) []string {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -107,28 +110,37 @@ func findingCount(t *testing.T, dsn, decisionID string) int {
 	}
 	defer pool.Close()
 
-	var count int
-	err = pool.QueryRow(ctx, `
-		SELECT count(*) FROM agent_findings f
+	rows, err := pool.Query(ctx, `
+		SELECT DISTINCT f.agent_id FROM agent_findings f
 		JOIN tasks t ON t.task_id = f.task_id
 		JOIN investigations i ON i.investigation_id = t.investigation_id
 		JOIN cases c ON c.case_id = i.case_id
-		WHERE c.decision_id = $1`, decisionID).Scan(&count)
+		WHERE c.decision_id = $1`, decisionID)
 	if err != nil {
-		t.Fatalf("counting findings: %v", err)
+		t.Fatalf("querying finding agent ids: %v", err)
 	}
-	return count
+	defer rows.Close()
+
+	var agentIDs []string
+	for rows.Next() {
+		var agentID string
+		if err := rows.Scan(&agentID); err != nil {
+			t.Fatalf("scanning agent id: %v", err)
+		}
+		agentIDs = append(agentIDs, agentID)
+	}
+	return agentIDs
 }
 
 // TestAReviewDecisionProducesACompletedInvestigation is the critical
-// acceptance test investigation-model.md section 9 describes, scoped to the
-// one seeded agent this first slice ships: a transaction with both a high
-// device-risk signal and a card-testing velocity pattern reaches REVIEW,
-// which the orchestrator's lineage writer turns into a CaseTrigger, which
-// the controller turns into a case, an investigation and a task, which the
-// worker runs (with a mocked tool/agent call, since neither the capability
-// runtime nor Phase 3 inference exist yet) through to a completed
-// investigation with a recorded finding.
+// acceptance test investigation-model.md section 9 describes: a transaction
+// with both a high device-risk signal and a card-testing velocity pattern
+// reaches REVIEW, which the orchestrator's lineage writer turns into a
+// CaseTrigger, which the controller turns into a case, an investigation and
+// one task per matching activation rule, which the worker runs (with a
+// mocked tool/agent call, since neither the capability runtime nor Phase 3
+// inference exist yet) through to a completed investigation with findings
+// from BOTH seeded agents.
 func TestAReviewDecisionProducesACompletedInvestigation(t *testing.T) {
 	h, dsn := startPipelineWithInvestigation(t, cardTestingHistory())
 
@@ -143,8 +155,40 @@ func TestAReviewDecisionProducesACompletedInvestigation(t *testing.T) {
 		t.Fatalf("case status = %q, want COMPLETED", status)
 	}
 
-	if count := findingCount(t, dsn, response.GetDecisionId()); count == 0 {
-		t.Fatal("the investigation completed with no findings recorded")
+	agentIDs := findingAgentIDs(t, dsn, response.GetDecisionId())
+	for _, want := range []string{"device_investigation_agent", "velocity_investigation_agent"} {
+		found := false
+		for _, got := range agentIDs {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no finding from %q; findings came from %v", want, agentIDs)
+		}
+	}
+}
+
+// TestAVelocityOnlySignalActivatesOnlyTheVelocityAgent proves activation is
+// discriminating, not "activate everything on any REVIEW": a card-testing
+// pattern on an otherwise ordinary transaction must recruit the velocity
+// investigation agent without also recruiting the device one.
+func TestAVelocityOnlySignalActivatesOnlyTheVelocityAgent(t *testing.T) {
+	h, dsn := startPipelineWithInvestigation(t, cardTestingHistory())
+
+	response := decide(t, h, transaction())
+	if response.GetOutcome().GetDecision() != riskv1.Decision_DECISION_REVIEW {
+		t.Fatalf("decision = %v, want REVIEW", response.GetOutcome().GetDecision())
+	}
+
+	status := caseStatus(t, dsn, response.GetDecisionId())
+	if status != "COMPLETED" {
+		t.Fatalf("case status = %q, want COMPLETED", status)
+	}
+
+	agentIDs := findingAgentIDs(t, dsn, response.GetDecisionId())
+	if len(agentIDs) != 1 || agentIDs[0] != "velocity_investigation_agent" {
+		t.Fatalf("findings came from %v, want exactly [velocity_investigation_agent]", agentIDs)
 	}
 }
 
