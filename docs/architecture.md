@@ -408,4 +408,8 @@ is a decision, not an implementation. Nothing emits, collects or stores any
 of it yet.
 
 No latency, throughput or detection-quality claim in this repository is
-currently supported by measurement, and none is made.
+currently supported by measurement, and none is made. One measurement now
+exists — `deadline-model.md` §7, a local single-threaded profile read back
+from recorded lineage — and it is explicitly a floor rather than a
+validation of the 80 ms target, which is stated for a concurrency nothing has
+yet run at.

@@ -34,7 +34,10 @@ investigation, capability-checked at every tool call.
 
 **No performance, detection-quality or security claim in this repository is
 currently supported by measurement, and none is made.** That is the point of the
-phase structure: claims arrive with the evidence for them, or not at all.
+phase structure: claims arrive with the evidence for them, or not at all. The
+one exception is a first local latency profile, recorded in
+[deadline-model.md](docs/deadline-model.md) §7 with the reasons it does not
+validate the 80 ms target.
 
 The weights, thresholds and rule thresholds in use are configured defaults
 awaiting the Phase 5 evaluation framework. They are not a claim about correct
