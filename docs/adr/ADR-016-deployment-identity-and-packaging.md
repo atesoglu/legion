@@ -93,11 +93,18 @@ label fails open.
 ### 3. Two Dockerfiles, parameterised, root context
 
 ```text
-deploy/docker/go.Dockerfile      ARG SERVICE  → gateway · orchestrator · capability ·
-                                                investigation-controller ·
-                                                investigation-worker · behavioral
-deploy/docker/rust.Dockerfile    ARG CRATE    → sentinel · velocity · device · geo
+deploy/docker/go.Dockerfile      ARG SERVICE + SOURCE → gateway · orchestrator ·
+                                                        capability ·
+                                                        investigation-controller ·
+                                                        investigation-worker · behavioral
+deploy/docker/rust.Dockerfile    ARG CRATE            → sentinel · velocity · device · geo
 ```
+
+Both take the build path as well as the identifier, because the two are not
+derivable from each other: `investigation-controller` is built from
+`investigation/controller`, and `orchestrator` from `control-plane/orchestrator`.
+`deploy/services.yaml` holds both, so the build reads the path from there
+rather than either file encoding a mapping.
 
 Ten images from two files, of which nine are buildable today: `behavioral`
 is declared here because the identifier is fixed by §1, but Phase 3 builds it.
@@ -123,12 +130,15 @@ change, and slow image builds are skipped image builds.
 `deploy/services.yaml` declares the topology once:
 
 ```yaml
-velocity:     { zone: data,    language: rust, port: 9300, agent: true }
-sentinel:     { zone: data,    language: rust, port: 9600, agent: false }
-gateway:      { zone: edge,    language: go,   port: 9100, agent: false }
-investigation-worker:
-              { zone: investigation, language: go, port: 9800, agent: false }
+velocity:     { zone: data,    language: rust, source: data-plane/engines/velocity, port: 9300, agent: true }
+sentinel:     { zone: data,    language: rust, source: data-plane/sentinel,         port: 9600, agent: false }
+gateway:      { zone: edge,    language: go,   source: gateway,                     port: 9100, agent: false }
+behavioral:   { zone: agents,  language: go,   source: agents/behavioral,           agent: true, planned: true }
 ```
+
+A planned service carries no port. Fixing an identifier before the code exists
+is the point of §1; choosing a port for it would be inventing a decision
+rather than recording one.
 
 One Helm chart iterates over it, with per-service overrides for the cases that
 genuinely differ, rather than seven subcharts that drift. CI asserts that the
@@ -141,9 +151,15 @@ breaks. It is also the deployment counterpart of ADR-014 — the agent set is
 configuration for the orchestrator, the service set is configuration for
 deployment, and in both cases adding a component is a data change.
 
-Distinct ports (9100–9600) are retained even though in-cluster every Service has
+Distinct ports (9100-9900) are retained even though in-cluster every Service has
 its own DNS name and could share one port. The value is that the local
 development path and the cluster differ in one fewer respect.
+
+The allocation is loosely grouped by zone — 91xx edge, 92xx control, 93xx-96xx
+data, 97xx-98xx investigation — with one exception: `capability` is control
+plane but sits at 9900, because it was added after the blocks either side of
+it were occupied. Renumbering it would change a default in every service that
+dials it for a cosmetic gain, so the exception is recorded rather than fixed.
 
 **No manifests, charts or Dockerfiles are written by this ADR.** It fixes the
 names and the topology source; Phase 4 writes the artefacts.

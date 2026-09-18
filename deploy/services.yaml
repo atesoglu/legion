@@ -1,0 +1,91 @@
+# The service set is data (ADR-016 §4), declared once and consumed by the
+# image build, the deployment manifests, and the check that keeps this file
+# honest: every entry that is not planned must be buildable, and every
+# buildable binary must appear here.
+#
+# source is recorded because the identifier is not derivable from it --
+# investigation/controller builds investigation-controller -- and neither is
+# derivable from the other for every service.
+#
+# The Rust crate name is not recorded because it is a rule rather than data:
+# ADR-016 §1 fixes it as legion-<identifier>.
+#
+# planned marks a deployable whose identifier is fixed but whose code does not
+# exist yet. Fixing the identifier early is the point of §1: the log field,
+# the agent_id, the image repository, the workload identity and the label
+# selector are all the same string, and agreeing it before there is code to
+# argue with is cheaper than renaming it afterwards.
+
+services:
+  gateway:
+    zone: edge
+    language: go
+    source: gateway
+    port: 9100
+    agent: false
+
+  orchestrator:
+    zone: control
+    language: go
+    source: control-plane/orchestrator
+    port: 9200
+    agent: false
+
+  capability:
+    zone: control
+    language: go
+    source: control-plane/capability
+    port: 9900
+    agent: false
+
+  velocity:
+    zone: data
+    language: rust
+    source: data-plane/engines/velocity
+    port: 9300
+    agent: true
+
+  device:
+    zone: data
+    language: rust
+    source: data-plane/engines/device
+    port: 9400
+    agent: true
+
+  geo:
+    zone: data
+    language: rust
+    source: data-plane/engines/geo
+    port: 9500
+    agent: true
+
+  sentinel:
+    zone: data
+    language: rust
+    source: data-plane/sentinel
+    port: 9600
+    agent: false
+
+  investigation-controller:
+    zone: investigation
+    language: go
+    source: investigation/controller
+    port: 9700
+    agent: false
+
+  investigation-worker:
+    zone: investigation
+    language: go
+    source: investigation/worker
+    port: 9800
+    agent: false
+
+  # Phase 3. No port is assigned: the identifier is what ADR-016 fixes early,
+  # and choosing a port for a service with no code would be inventing a
+  # decision rather than recording one.
+  behavioral:
+    zone: agents
+    language: go
+    source: agents/behavioral
+    agent: true
+    planned: true
