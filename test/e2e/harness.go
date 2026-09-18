@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -234,23 +235,88 @@ func (h *harness) startInvestigationService(pkg, service string, env []string) {
 	h.spawn(service, binary, nil, env)
 }
 
-// startLineageStore runs a real PostgreSQL container, so lineage persistence
-// is exercised exactly as it is in a deployment (ADR-007). Unlike the feature
-// store, there is no pure-Go in-process stand-in for Postgres; this is why
-// the suite reaches for Docker here and nowhere else.
+// One PostgreSQL container is shared by the whole package, and each test that
+// needs a database gets one of its own on it. Six tests starting six
+// containers dominated the suite's runtime -- the same reason buildOnce above
+// exists, applied to the other expensive thing.
 //
-// It skips loudly, in the same spirit as a missing Rust binary, when Docker
-// is not available or the image cannot be obtained.
-func (h *harness) startLineageStore() string {
+// Isolation is preserved because a database, not a schema, is handed out: each
+// test's services run their migrations against an empty one, exactly as they
+// did when each test had a container to itself.
+var (
+	postgresOnce      sync.Once
+	postgresContainer string
+	postgresPort      int
+	postgresErr       error
+	postgresDatabases atomic.Int64
+)
+
+// TestMain removes the shared container once the last test has finished.
+//
+// It deliberately does not start it. A container that cannot start must skip
+// the tests that need it rather than fail the package, and only a *testing.T
+// can skip; tests needing no database must not be skipped for the absence of
+// one.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if postgresContainer != "" {
+		_ = exec.Command("docker", "rm", "-f", postgresContainer).Run()
+	}
+	os.Exit(code)
+}
+
+func postgresDSN(port int, database string) string {
+	return fmt.Sprintf("postgres://postgres:legion@127.0.0.1:%d/%s?sslmode=disable", port, database)
+}
+
+// postgres returns a DSN for a database of this test's own, created on the
+// package's shared container. Creating a database costs milliseconds; starting
+// a container costs tens of seconds.
+//
+// It skips loudly, in the same spirit as a missing Rust binary, when Docker is
+// not available or the image cannot be obtained. There is no pure-Go in-process
+// stand-in for PostgreSQL, which is why the suite reaches for Docker here and
+// nowhere else.
+func (h *harness) postgres() string {
 	h.t.Helper()
 
-	if _, err := exec.LookPath("docker"); err != nil {
-		h.t.Skip("docker is not available; skipping the lineage store")
+	postgresOnce.Do(startSharedPostgres)
+	if postgresErr != nil {
+		h.t.Skipf("no PostgreSQL is available: %v", postgresErr)
 	}
 
-	port := freePort(h.t)
-	name := fmt.Sprintf("legion-e2e-lineage-%d", port)
+	name := fmt.Sprintf("legion_e2e_%d", postgresDatabases.Add(1))
 
+	ctx, cancel := context.WithTimeout(context.Background(), readinessTimeout)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, postgresDSN(postgresPort, "legion"))
+	if err != nil {
+		h.t.Fatalf("connecting to the shared PostgreSQL: %v", err)
+	}
+	defer pool.Close()
+
+	// The name is generated, never caller-supplied, so it cannot be an
+	// injection vector -- CREATE DATABASE takes no parameters anyway.
+	if _, err := pool.Exec(ctx, "CREATE DATABASE "+name); err != nil {
+		h.t.Fatalf("creating database %s: %v", name, err)
+	}
+	return postgresDSN(postgresPort, name)
+}
+
+func startSharedPostgres() {
+	if _, err := exec.LookPath("docker"); err != nil {
+		postgresErr = fmt.Errorf("docker is not on PATH: %w", err)
+		return
+	}
+
+	port, err := reservePort()
+	if err != nil {
+		postgresErr = err
+		return
+	}
+
+	name := fmt.Sprintf("legion-e2e-postgres-%d", port)
 	run := exec.Command("docker", "run", "-d", "--rm",
 		"--name", name,
 		"-p", fmt.Sprintf("127.0.0.1:%d:5432", port),
@@ -258,22 +324,21 @@ func (h *harness) startLineageStore() string {
 		"-e", "POSTGRES_DB=legion",
 		"postgres:16-alpine")
 	if output, err := run.CombinedOutput(); err != nil {
-		h.t.Skipf("could not start a PostgreSQL container: %v\n%s", err, output)
+		postgresErr = fmt.Errorf("could not start a PostgreSQL container: %v\n%s", err, output)
+		return
 	}
-	h.t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	postgresContainer = name
+	postgresPort = port
 
-	dsn := fmt.Sprintf("postgres://postgres:legion@127.0.0.1:%d/legion?sslmode=disable", port)
-	waitForPostgres(h.t, dsn)
-	return dsn
+	if err := awaitPostgres(postgresDSN(port, "legion")); err != nil {
+		postgresErr = err
+	}
 }
 
-// waitForPostgres blocks until dsn accepts a real connection. The container
-// port opens well before the server inside it accepts authenticated
-// connections, so a bare TCP dial (as waitReady does for the Go/Rust
-// binaries) is not enough here.
-func waitForPostgres(t *testing.T, dsn string) {
-	t.Helper()
-
+// awaitPostgres blocks until dsn accepts a real connection. The container port
+// opens well before the server inside it accepts authenticated connections, so
+// a bare TCP dial (as waitReady does for the Go/Rust binaries) is not enough.
+func awaitPostgres(dsn string) error {
 	deadline := time.Now().Add(readinessTimeout)
 	for {
 		pingCtx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -284,13 +349,27 @@ func waitForPostgres(t *testing.T, dsn string) {
 		}
 		cancel()
 		if err == nil {
-			return
+			return nil
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("lineage store at %s never became ready: %v", dsn, err)
+			return fmt.Errorf("PostgreSQL at %s never became ready: %w", dsn, err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func reservePort() (int, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, fmt.Errorf("reserving a port: %w", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	address, ok := listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, fmt.Errorf("listener did not yield a TCP address")
+	}
+	return address.Port, nil
 }
 
 // dial opens a client connection to an already-started service.
@@ -315,15 +394,9 @@ func callContext(t *testing.T) (context.Context, context.CancelFunc) {
 func freePort(t *testing.T) int {
 	t.Helper()
 
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	port, err := reservePort()
 	if err != nil {
-		t.Fatalf("reserving a port: %v", err)
+		t.Fatalf("%v", err)
 	}
-	defer func() { _ = listener.Close() }()
-
-	address, ok := listener.Addr().(*net.TCPAddr)
-	if !ok {
-		t.Fatal("listener did not yield a TCP address")
-	}
-	return address.Port
+	return port
 }

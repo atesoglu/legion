@@ -23,7 +23,7 @@ func startPipelineWithInvestigation(t *testing.T, history []storedFeature) (*har
 	t.Helper()
 
 	h := newHarness(t)
-	dsn := h.startLineageStore()
+	dsn := h.postgres()
 
 	store := h.startFeatureStore(history)
 	dedupStore := h.startDedupStore()

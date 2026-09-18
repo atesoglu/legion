@@ -20,7 +20,7 @@ func startPipelineWithLineage(t *testing.T, history []storedFeature) (*harness, 
 	t.Helper()
 
 	h := newHarness(t)
-	dsn := h.startLineageStore()
+	dsn := h.postgres()
 
 	// startPipeline would build a second harness; the lineage store must be
 	// part of the same one so its container is cleaned up alongside the rest.

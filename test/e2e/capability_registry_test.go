@@ -45,7 +45,7 @@ func startAgentRegistry(t *testing.T) (*harness, string, string) {
 	t.Helper()
 
 	h := newHarness(t)
-	dsn := h.startLineageStore()
+	dsn := h.postgres()
 	investigationQueue := h.startInvestigationQueue()
 
 	capability := h.startGo("control-plane/capability", "capability", nil)
