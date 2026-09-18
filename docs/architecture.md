@@ -343,7 +343,10 @@ runs the full enforcement pipeline (identity, grant, scope,
 constraint, budget) against a static, reviewable manifest
 (`broker.Default()`), and it has one real caller -- `investigation/worker`
 calls it before every mocked tool execution, and a denial actually stops the
-tool from "running" and dead-letters the task. What remains documented
+tool from "running" and fails the task permanently rather than retrying it.
+That manifest is deliberately not sourced from Zone 6's `agent_definitions`
+table (see `capability-model.md` section 4); `test/e2e` asserts the two
+agree in the direction that matters. What remains documented
 intent: the fixed-`Capability`-enum path has no caller (the deterministic
 agents are served push-style and the behavioural agent does not exist), a
 `RegisterAgent`/manifest API, mTLS-asserted `workload_id` (a caller-asserted

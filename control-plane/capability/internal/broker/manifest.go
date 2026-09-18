@@ -69,9 +69,14 @@ func Default() []*agentv1.AgentManifest {
 			},
 		},
 		{
-			// Mirrors investigation/controller's seeded agent_definitions
-			// row for the same agent_id -- a duplication kept manually in
-			// sync for now (documented gap; see docs/capability-model.md).
+			// The investigation agents' tool grants are NOT read from Zone
+			// 6's agent_definitions.allowed_tools: that column is what an
+			// agent declares it will call, written by a zone whose worker
+			// holds credentials for the same database, while this is what
+			// it is permitted to call. Sourcing one from the other would
+			// let the constrained component write its own constraint
+			// (threat-model.md T-14). test/e2e/capability_registry_test.go
+			// asserts the declaration never exceeds these grants.
 			Identity: identity("device_investigation_agent"),
 			ToolGrants: []*agentv1.ToolGrant{
 				{ToolName: "lookup_device_history"},

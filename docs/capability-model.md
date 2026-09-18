@@ -115,11 +115,28 @@ Intended initial manifests:
 | Behavioral | `GET_TRANSACTION`, `GET_ACCOUNT_FEATURES`, `SUBMIT_EVALUATION` | Small named allow-list; low `max_invocations` |
 
 Investigation agents (Zone 6, ADR-017) are manifested the same way, except
-their grants are `allowed_tools` entries from `agent_definitions` (ADR-017)
-rather than a fixed capability enum member per feature family — a tool
-registry is a database of grantable verbs, which is exactly what this
-section already describes in the abstract. The enforcement order in §5 is
-unchanged; only the source of the manifest differs.
+their grants name tools rather than a fixed capability enum member per
+feature family — a tool registry is a database of grantable verbs, which is
+exactly what this section already describes in the abstract. The enforcement
+order in §5 is unchanged; only the shape of the grantable verb differs.
+
+**A tool grant is not read from `agent_definitions`, deliberately.** That
+table's `allowed_tools` column is a *declaration* — which tools an agent
+intends to call — owned by Zone 6, whose worker holds write credentials for
+that database. The *grant* lives in the capability runtime's own reviewed
+manifest, in Zone 2, where nothing in Zone 6 can reach it. Sourcing the
+grant from the declaration would let the component being constrained define
+its own constraint, which is the exact failure T-14 exists to prevent.
+
+The two must still agree in one direction: everything declared must be
+granted, or an agent's first call to its second tool is denied at runtime as
+if the capability runtime were broken. That invariant is asserted by
+`test/e2e/capability_registry_test.go`, which queries the seeded
+`agent_definitions` rows and asks the running capability runtime about every
+tool each one declares — and separately proves no agent is granted a tool
+only another agent declares. It runs in CI. The reverse direction (a grant
+no agent declares) is not detected: the manifest is not enumerable over the
+wire, and making it so would tell a caller what exists, which §5 forbids.
 
 The behavioural agent — the one with a language model in it — holds the
 narrowest useful set. It cannot read velocity, device or geo features directly;

@@ -210,17 +210,24 @@ decides whether the call is authorised.
 
 **Built, with real limits.** `control-plane/capability` runs the pipeline
 above: `investigation/worker` calls `CheckToolCapability` before every tool
-execution, and a denial actually stops it and dead-letters the task rather
-than logging a warning and continuing. What is not real yet: the tool call
-itself is still one canned, mocked result per task, so the check gates a
-fake action, not an arbitrary one; the manifest granting `allowed_tools` is
-a static Go default (`broker.Default()`) kept manually in sync with
-`agent_definitions`, not read from it directly; and `workload_id` is
+execution, and a denial actually stops it and fails the task permanently
+(§4's `FAILED`, not a retry — asking the same broker the same question gets
+the same answer) rather than logging a warning and continuing. What is not
+real yet: the tool call itself is still one canned, mocked result per task,
+so the check gates a fake action, not an arbitrary one; and `workload_id` is
 asserted by the caller, a Phase 1 stand-in for the mTLS peer identity
-ADR-011 will eventually provide. None of that makes the check theatre —
-the tool genuinely does not run on a denial — but it does mean the grant
-source is a second, hand-maintained copy of the registry, and there is
-nothing yet stopping the two from drifting apart.
+ADR-011 will eventually provide.
+
+The grant does **not** come from `agent_definitions`, and that is not an
+oversight. `allowed_tools` is a declaration owned by Zone 6 — whose worker
+holds write credentials for that database — while the grant is reviewed Go
+source in Zone 2 that nothing in Zone 6 can reach. Reading one from the
+other would let the constrained component write its own constraint (T-14).
+What is required is that the declaration never exceeds the grant, and
+`test/e2e/capability_registry_test.go` asserts exactly that in CI: every
+tool a seeded agent declares is checked against the running capability
+runtime, and no agent may hold a tool only another agent declares. See
+`capability-model.md` §4 for the direction that is still undetected.
 
 ## 8. Observability and cost
 
@@ -265,8 +272,9 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
 - It does not claim this replaces a human analyst. The investigation result
   is evidence for one, not a replacement of one.
 - It does not claim the capability check gates anything but a mocked tool
-  call, or that its manifest is read from `agent_definitions` rather than a
-  hand-maintained copy of it — see §7's note on both.
+  call — see §7. Nor does it claim the capability runtime's grants are
+  complete: nothing detects a grant no agent declares, because the manifest
+  is deliberately not enumerable over the wire.
 - It does not claim case creation is safe from duplication across callers.
   A case is deduplicated on `idempotency_key` alone (see `CaseTrigger`'s
   proto comment), not `(caller, idempotency_key)` as the gateway's own dedup

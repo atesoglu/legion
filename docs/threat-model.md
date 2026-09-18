@@ -313,17 +313,25 @@ exfiltrate data gathered during a case.
   **Enforced, with real limits.** `control-plane/capability` (ADR-005) runs
   the identity/grant/scope/constraint/budget pipeline, and
   `investigation/worker` calls `CheckToolCapability` before every tool
-  execution; a denial genuinely stops the call and dead-letters the task.
-  Three gaps remain, none of them hypothetical: (1) there is no real tool
+  execution; a denial genuinely stops the call and fails the task
+  permanently rather than retrying into the same answer. Two gaps remain,
+  neither hypothetical: (1) there is no real tool
   registry behind the check yet — the one investigation agent's "tool call"
   is still canned, deterministic output, so the check gates a mock, not an
-  arbitrary action a compromised agent might otherwise take; (2) the
-  manifest granting `allowed_tools` is a static Go default, hand-kept in
-  sync with `agent_definitions` rather than read from it, so the two can
-  drift; (3) `workload_id` is asserted by the caller, a Phase 1 stand-in for
+  arbitrary action a compromised agent might otherwise take; (2)
+  `workload_id` is asserted by the caller, a Phase 1 stand-in for
   the mTLS peer identity ADR-011 will provide, so a compromised worker
   process could still assert any identity it likes. This narrows, but does
   not close, T-14 until a real tool registry and mTLS both exist.
+
+  What is deliberately **not** a gap: the grant is a static Go manifest in
+  Zone 2 rather than a read of Zone 6's `agent_definitions.allowed_tools`.
+  The worker holds write credentials for that database, so sourcing grants
+  from it would let a compromised worker grant itself any tool — this threat,
+  self-served. The two are a declaration and a grant, not one fact stored
+  twice, and `test/e2e/capability_registry_test.go` asserts in CI that the
+  declaration never exceeds the grant and that no agent holds a tool only
+  another agent declares.
 - **Detection.** Tool-call audit trail (logged, not yet persisted anywhere
   durable — Phase 4 scope); finding-to-evidence reference completeness (a
   finding with no cited evidence is itself a signal); per-agent confidence
