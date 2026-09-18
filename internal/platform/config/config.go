@@ -35,6 +35,11 @@ type Service struct {
 
 	// LogLevel is one of debug, info, warn, error.
 	LogLevel string
+
+	// OTLPEndpoint is the OpenTelemetry collector's gRPC target (ADR-020).
+	// Empty disables export: a service must start and serve without a
+	// collector, and the e2e suite runs without one.
+	OTLPEndpoint string
 }
 
 // Defaults for a Legion Go service. The 80ms request deadline is the platform
@@ -52,6 +57,7 @@ func LoadService(name, defaultListenAddress string) (Service, error) {
 		Name:          name,
 		ListenAddress: envString("LEGION_LISTEN_ADDRESS", defaultListenAddress),
 		LogLevel:      envString("LEGION_LOG_LEVEL", DefaultLogLevel),
+		OTLPEndpoint:  envString("LEGION_OTLP_ENDPOINT", ""),
 	}
 
 	var err error
