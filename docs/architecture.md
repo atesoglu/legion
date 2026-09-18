@@ -385,7 +385,10 @@ easy to mistake for working:
   via a real migration tool -- `internal/platform/migrate`, golang-migrate --
   rather than the idempotent-DDL shape it originally shipped with) and
   returned inline on request. That is what replay (ADR-013) and shadow mode
-  (ADR-012) require, but neither has been built yet to consume it.
+  (ADR-012) require, but neither has been built yet to consume it. The
+  `shadow` flag itself is now carried end to end and a shadow decision opens
+  no investigation case, but nothing sets the flag: there is no
+  traffic-mirroring mechanism and no shadow-versus-production comparison.
 
 One gap this list used to carry has closed: **transaction idempotency**
 (ADR-019) is now implemented. `Transaction.idempotency_key` is required, and

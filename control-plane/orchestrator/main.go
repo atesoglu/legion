@@ -84,7 +84,13 @@ func (s *server) EvaluateTransaction(
 		return nil, status.Error(codes.Internal, "could not assign a decision identifier")
 	}
 
-	outcome, lineage, err := s.coordinator.Evaluate(ctx, decisionID, subject, request.GetOptions().GetPolicyId())
+	options := request.GetOptions()
+	outcome, lineage, err := s.coordinator.Evaluate(ctx, evaluation.Request{
+		EvaluationID: decisionID,
+		Subject:      subject,
+		PolicyID:     options.GetPolicyId(),
+		Shadow:       options.GetShadow(),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +99,7 @@ func (s *server) EvaluateTransaction(
 		DecisionId: decisionID,
 		Outcome:    outcome,
 	}
-	if request.GetOptions().GetIncludeLineage() {
+	if options.GetIncludeLineage() {
 		response.Lineage = lineage
 	}
 	return response, nil

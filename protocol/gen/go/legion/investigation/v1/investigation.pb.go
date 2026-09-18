@@ -275,8 +275,10 @@ func (ToolExecutionStatus) EnumDescriptor() ([]byte, []int) {
 }
 
 // CaseTrigger is published by the orchestrator's lineage writer whenever
-// DecisionOutcome.decision == REVIEW (ADR-017 §1.3). It is the only message
-// in this package the synchronous decision path constructs.
+// DecisionOutcome.decision == REVIEW (ADR-017 §1.3) and the evaluation was
+// not a shadow one: a shadow result is recorded, never acted upon (ADR-012),
+// and opening an analyst-visible case is acting upon it. It is the only
+// message in this package the synchronous decision path constructs.
 type CaseTrigger struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DecisionId    string                 `protobuf:"bytes,1,opt,name=decision_id,json=decisionId,proto3" json:"decision_id,omitempty"`

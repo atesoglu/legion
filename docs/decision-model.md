@@ -216,6 +216,23 @@ tagged so that shadow decisions can never be mixed into production metrics by
 accident. This is how a policy, model, prompt or weight change is measured
 before it can decline anyone. See ADR-012.
 
+Two parts of this are built: `EvaluationOptions.shadow` reaches the
+coordinator and is recorded in `DecisionLineage.shadow` (and the `shadow`
+column of the `decisions` table), and a shadow `REVIEW` opens no
+investigation case — recording a result and dispatching investigation agents
+to an analyst-visible case are different things, and only the first is
+"recorded, not acted upon".
+
+What is not built: nothing sets the flag (no caller, and no traffic-mirroring
+mechanism exists), shadow traffic is not deprioritised or shed first under
+load as ADR-012's trade-offs require, and no comparison of shadow against
+production exists — that is Phase 5's evaluation framework. One interaction
+is undecided rather than implemented: a shadow request consumes a gateway
+idempotency key (ADR-019) from the same keyspace as an authoritative one, so
+shadowing live traffic by replaying its keys would collide with the original
+requests. Whether shadow requests get a separate keyspace or skip dedup
+entirely is an open decision.
+
 ## 9. What this model does not claim
 
 - It does not claim the weights or thresholds are correct. They are configured

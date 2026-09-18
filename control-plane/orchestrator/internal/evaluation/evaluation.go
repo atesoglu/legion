@@ -159,6 +159,22 @@ func New(options Options) (*Coordinator, error) {
 	}, nil
 }
 
+// Request is one evaluation's per-request switches, translated from the
+// wire's EvaluationOptions so this package stays transport-free.
+//
+// A new switch belongs here rather than as another positional parameter:
+// Shadow was silently dropped for exactly that reason, because there was no
+// obvious place to put it and a fifth argument looked worse than omitting it.
+type Request struct {
+	EvaluationID string
+	Subject      *riskv1.Transaction
+	PolicyID     string
+
+	// Shadow marks a non-authoritative evaluation (ADR-012): processed
+	// identically, recorded identically, never acted upon.
+	Shadow bool
+}
+
 // Evaluate gathers signals for one subject and returns the sentinel's
 // decision, plus the lineage recorded for it.
 //
@@ -166,10 +182,11 @@ func New(options Options) (*Coordinator, error) {
 // deadline. A dependency that fails is a degraded decision, not an error.
 func (c *Coordinator) Evaluate(
 	ctx context.Context,
-	evaluationID string,
-	subject *riskv1.Transaction,
-	policyID string,
+	req Request,
 ) (*riskv1.DecisionOutcome, *riskv1.DecisionLineage, error) {
+	evaluationID := req.EvaluationID
+	subject := req.Subject
+
 	started := time.Now()
 	deadline := budget.Remaining(ctx, c.fallback)
 
@@ -196,7 +213,7 @@ func (c *Coordinator) Evaluate(
 		EvaluationId:         evaluationID,
 		Subject:              subject,
 		Evaluations:          evaluations,
-		PolicyId:             policyID,
+		PolicyId:             req.PolicyID,
 		FeatureStoreDegraded: featureSet.GetDegraded(),
 		Budget:               durationpb.New(sentinelWindow),
 	})
@@ -218,6 +235,7 @@ func (c *Coordinator) Evaluate(
 		evaluations:    evaluations,
 		featureSet:     featureSet,
 		featureFailure: featureFailure,
+		shadow:         req.Shadow,
 		deadline:       deadline,
 		totalElapsed:   time.Since(started),
 		spans: []*riskv1.ExecutionSpan{
@@ -230,7 +248,11 @@ func (c *Coordinator) Evaluate(
 
 	// Off the critical path, same as lineage: the request has already been
 	// decided, and a down investigation queue must not be able to affect it.
-	if outcome.GetDecision() == riskv1.Decision_DECISION_REVIEW {
+	//
+	// A shadow decision opens no case: ADR-012 requires a shadow result to be
+	// recorded and never acted upon, and dispatching investigation agents to
+	// an analyst-visible case is acting upon it.
+	if outcome.GetDecision() == riskv1.Decision_DECISION_REVIEW && !req.Shadow {
 		c.caseTriggers.Publish(&investigationv1.CaseTrigger{
 			DecisionId:     evaluationID,
 			TransactionId:  subject.GetId(),
@@ -252,6 +274,7 @@ type lineageInput struct {
 	evaluations    []*riskv1.AgentEvaluation
 	featureSet     *riskv1.FeatureSet
 	featureFailure *commonv1.Failure
+	shadow         bool
 	deadline       time.Duration
 	totalElapsed   time.Duration
 	spans          []*riskv1.ExecutionSpan
@@ -293,6 +316,7 @@ func (c *Coordinator) buildLineage(in lineageInput) *riskv1.DecisionLineage {
 			Contract:         &commonv1.Version{Name: "legion-protocol", Version: contractVersion},
 		},
 		Spans:        in.spans,
+		Shadow:       in.shadow,
 		Deadline:     durationpb.New(in.deadline),
 		TotalElapsed: durationpb.New(in.totalElapsed),
 		Failures:     failures,

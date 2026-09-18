@@ -249,7 +249,7 @@ func TestEveryRegisteredAgentIsConsulted(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestEvaluationsReachTheSentinelInAgentOrder(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, healthy(), sentinel)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -285,7 +285,7 @@ func TestAFailedAgentIsReportedRatherThanOmitted(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -311,7 +311,7 @@ func TestASlowAgentDoesNotDelayTheOthersBeyondTheWindow(t *testing.T) {
 	c := coordinator(t, clients, sentinel)
 
 	started := time.Now()
-	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	elapsed := time.Since(started)
@@ -350,7 +350,7 @@ func TestAnOpenBreakerSkipsTheCallEntirely(t *testing.T) {
 	}
 
 	for range 3 {
-		if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err != nil {
+		if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err != nil {
 			t.Fatalf("Evaluate: %v", err)
 		}
 	}
@@ -370,7 +370,7 @@ func TestAnExhaustedBudgetSkipsAgentsButStillDecides(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Millisecond)
 	defer cancel()
 
-	outcome, _, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, "")
+	outcome, _, err := c.Evaluate(ctx, evaluationOf(&riskv1.Transaction{}))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestAnExpiredDeadlineProducesAnErrorNotADecision(t *testing.T) {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
 
-	if _, _, err := c.Evaluate(ctx, "e1", &riskv1.Transaction{}, ""); status.Code(err) != codes.DeadlineExceeded {
+	if _, _, err := c.Evaluate(ctx, evaluationOf(&riskv1.Transaction{})); status.Code(err) != codes.DeadlineExceeded {
 		t.Fatalf("error = %v, want DeadlineExceeded", err)
 	}
 }
@@ -401,7 +401,7 @@ func TestAnExpiredDeadlineProducesAnErrorNotADecision(t *testing.T) {
 func TestAnUnavailableSentinelIsAnErrorNotAnAllow(t *testing.T) {
 	c := coordinator(t, healthy(), &fakeSentinel{err: errors.New("down")})
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", &riskv1.Transaction{}, ""); err == nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(&riskv1.Transaction{})); err == nil {
 		t.Fatal("Evaluate returned a decision without the sentinel")
 	}
 }
@@ -411,7 +411,7 @@ func TestFeaturesReachTheAgentsThatNeedThem(t *testing.T) {
 	store := &fakeStore{}
 	c := coordinatorWithStore(t, clients, &fakeSentinel{}, store)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(subject())); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
@@ -429,7 +429,7 @@ func TestFreshEvidenceIsNotReportedAsDegraded(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinatorWithStore(t, healthy(), sentinel, &fakeStore{})
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(subject())); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if sentinel.degrade {
@@ -442,7 +442,7 @@ func TestAStoreOutageDegradesTheDecisionRatherThanFailingIt(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinatorWithStore(t, clients, sentinel, &fakeStore{err: errors.New("store down")})
 
-	outcome, _, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	outcome, _, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestStaleEvidenceIsReportedAsDegraded(t *testing.T) {
 	}}}
 	c := coordinatorWithStore(t, healthy(), sentinel, store)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(subject())); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 	if !sentinel.degrade {
@@ -487,7 +487,7 @@ func TestEvaluateRecordsLineageForEveryDecision(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, healthy(), sentinel)
 
-	outcome, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	outcome, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestLineageGovernedVersionsCarryThePolicyAndCatalogue(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, healthy(), sentinel)
 
-	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestLineageRecordsAgentVersionsFromSuccessfulSignalsOnly(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestLineageIncludesAFailureForEveryFailedAgent(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, clients, sentinel)
 
-	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestLineageIsRecordedEvenWhenNotReturnedInline(t *testing.T) {
 	sentinel := &fakeSentinel{}
 	c := coordinator(t, healthy(), sentinel)
 
-	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -611,7 +611,7 @@ func TestAReviewDecisionPublishesACaseTrigger(t *testing.T) {
 	sentinel := &fakeSentinel{decision: riskv1.Decision_DECISION_REVIEW}
 	c := coordinator(t, healthy(), sentinel)
 
-	_, lineage, err := c.Evaluate(context.Background(), "e1", subject(), "")
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
@@ -629,11 +629,70 @@ func TestAnAllowDecisionPublishesNoCaseTrigger(t *testing.T) {
 	sentinel := &fakeSentinel{decision: riskv1.Decision_DECISION_ALLOW}
 	c := coordinator(t, healthy(), sentinel)
 
-	if _, _, err := c.Evaluate(context.Background(), "e1", subject(), ""); err != nil {
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(subject())); err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
 
 	if triggers := c.caseTriggers.(*fakeCaseTriggerPublisher).triggers(); len(triggers) != 0 {
 		t.Fatalf("case triggers published = %d, want 0 for an ALLOW decision", len(triggers))
 	}
+}
+
+func TestAShadowEvaluationIsRecordedAsShadow(t *testing.T) {
+	c := coordinator(t, healthy(), &fakeSentinel{})
+
+	_, lineage, err := c.Evaluate(context.Background(), Request{
+		EvaluationID: "e1",
+		Subject:      subject(),
+		Shadow:       true,
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if !lineage.GetShadow() {
+		t.Error("a shadow request was recorded as production lineage (ADR-012): " +
+			"shadow decisions must never be mixable into production metrics")
+	}
+	if entries := c.lineage.(*fakeLineageStore).entries(); !entries[0].GetShadow() {
+		t.Error("the persisted entry does not carry shadow, only the returned one")
+	}
+}
+
+func TestANonShadowEvaluationIsNotRecordedAsShadow(t *testing.T) {
+	c := coordinator(t, healthy(), &fakeSentinel{})
+
+	_, lineage, err := c.Evaluate(context.Background(), evaluationOf(subject()))
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if lineage.GetShadow() {
+		t.Error("an authoritative decision was recorded as shadow")
+	}
+}
+
+func TestAShadowReviewOpensNoCase(t *testing.T) {
+	sentinel := &fakeSentinel{decision: riskv1.Decision_DECISION_REVIEW}
+	c := coordinator(t, healthy(), sentinel)
+
+	_, _, err := c.Evaluate(context.Background(), Request{
+		EvaluationID: "e1",
+		Subject:      subject(),
+		Shadow:       true,
+	})
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	if triggers := c.caseTriggers.(*fakeCaseTriggerPublisher).triggers(); len(triggers) != 0 {
+		t.Fatalf("case triggers published = %d, want 0: a shadow result is recorded, never acted upon (ADR-012), "+
+			"and dispatching investigation agents to an analyst-visible case is acting upon it", len(triggers))
+	}
+}
+
+// evaluationOf is the ordinary, authoritative request almost every test
+// wants; only the shadow tests spell the struct out.
+func evaluationOf(subject *riskv1.Transaction) Request {
+	return Request{EvaluationID: "e1", Subject: subject}
 }
