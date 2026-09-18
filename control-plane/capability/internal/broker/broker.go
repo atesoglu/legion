@@ -9,6 +9,7 @@
 package broker
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,8 +18,22 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/atesoglu/legion/internal/platform/observability"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
+)
+
+// checks counts every verdict this broker reached. A denial stops a tool from
+// running and fails the task permanently, which until now was visible only in
+// a log line and in the task's row (ADR-020, threat-model T-14's detection
+// column).
+//
+// verdict is the only attribute. The agent's identity is not one: a denial's
+// subject is a per-entity question, and Zone 6 anticipates thousands of
+// logical agents.
+var checks = observability.NewCounter(
+	"legion.capability.checks",
+	"Capability checks by verdict, allowed and denied alike.",
 )
 
 // AuditLogger records one capability invocation, allowed or denied. The
@@ -189,6 +204,11 @@ func (b *Broker) auditRecord(
 	scopeID string, identity *agentv1.AgentIdentity, capability agentv1.Capability,
 	verdict agentv1.CapabilityVerdict, detail string, elapsed time.Duration,
 ) {
+	// Counted here rather than at each return: this is the one path every
+	// verdict already takes, so a new denial reason cannot be added without
+	// being counted.
+	checks.Inc(context.Background(), observability.Verdict(verdict.String()))
+
 	if b.audit == nil {
 		return
 	}

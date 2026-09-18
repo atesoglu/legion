@@ -18,7 +18,17 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/atesoglu/legion/internal/platform/observability"
 	investigationv1 "github.com/atesoglu/legion/protocol/gen/go/legion/investigation/v1"
+)
+
+// publications counts what became of every trigger. A dropped trigger means a
+// REVIEW decision that opened no case, which is invisible from the decision
+// path by design -- the caller already has its answer -- and was therefore
+// invisible everywhere until this existed.
+var publications = observability.NewCounter(
+	"legion.casetrigger.publications",
+	"Case triggers by what became of them: published, dropped before the queue, or failed to publish.",
 )
 
 // streamName is the trigger stream the investigation controller consumes
@@ -83,7 +93,10 @@ func (p *RedisPublisher) publish(trigger *investigationv1.CaseTrigger) {
 	}).Err()
 	if err != nil {
 		p.log.Warn("case trigger publish failed", "decision_id", trigger.GetDecisionId(), "error", err)
+		publications.Inc(ctx, observability.Outcome("failed"))
+		return
 	}
+	publications.Inc(ctx, observability.Outcome("published"))
 }
 
 // Publish enqueues trigger. See Publisher.
@@ -92,6 +105,7 @@ func (p *RedisPublisher) Publish(trigger *investigationv1.CaseTrigger) {
 	case p.queue <- trigger:
 	default:
 		p.log.Warn("case trigger queue full; dropping trigger", "decision_id", trigger.GetDecisionId())
+		publications.Inc(context.Background(), observability.Outcome("dropped"))
 	}
 }
 

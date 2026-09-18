@@ -283,9 +283,11 @@ again to obtain a favourable outcome.
   before the first has stored its result returns `ABORTED` rather than the
   eventual answer, which is a caller-visible gap worth revisiting if it
   proves to matter in practice.
-- **Detection.** Duplicate-subject rate; decision reuse attempts. Neither is
-  instrumented yet — both are counters ADR-020 gives a destination but nothing
-  emits them; see the observability gap in `architecture.md` §9.
+- **Detection.** Duplicate-subject rate; decision reuse attempts. Both are now
+  counted — `legion.gateway.dedup.claims` distinguishes a new claim from a
+  replay, a body conflict and a concurrent in-flight duplicate — but nothing
+  collects the counter yet and no threshold alerts on it; see the
+  observability gap in `architecture.md` §9.
 - **Residual risk.** Legion does not control the caller's use of its response.
   If the calling system does not bind a decision to the transaction it
   requested, replay is possible outside Legion's boundary. That boundary is
@@ -336,7 +338,9 @@ exfiltrate data gathered during a case.
 - **Detection.** Tool-call audit trail (logged, not yet persisted anywhere
   durable — and ADR-020 does not cover it: an audit record is evidential like
   lineage, not operational like a log, so where it persists is still
-  undecided); finding-to-evidence reference completeness (a
+  undecided); `legion.capability.checks` counts every verdict, allowed and
+  denied alike, though nothing collects it yet; finding-to-evidence reference
+  completeness (a
   finding with no cited evidence is itself a signal); per-agent confidence
   distribution monitored the same way per-agent score distribution is
   monitored for T-01.

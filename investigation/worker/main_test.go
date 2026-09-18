@@ -11,6 +11,10 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 
+	"go.opentelemetry.io/otel"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/atesoglu/legion/investigation/internal/queue"
 	"github.com/atesoglu/legion/investigation/internal/store"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
@@ -375,6 +379,63 @@ func TestARetryingTaskIsClaimedAgainOnRedelivery(t *testing.T) {
 	}
 	if st.claims != 1 || st.completions != 1 {
 		t.Fatalf("claims=%d completions=%d, want 1/1: RETRYING is not terminal", st.claims, st.completions)
+	}
+}
+
+// TestTaskOutcomesAreCounted proves the instrument reaches a real meter.
+// Reaching DEAD_LETTER was the silent failure ADR-020 exists to make visible,
+// and a counter that is declared but never resolves would leave it exactly as
+// silent while looking like it had been fixed.
+//
+// It also exercises the ordering this package depends on: taskOutcomes is a
+// package-level instrument, so it is declared long before any provider is
+// installed.
+func TestTaskOutcomesAreCounted(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(provider)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	spent := runnableTask()
+	spent.Status = store.TaskRunning
+	spent.Attempt = 3
+	if got := handle(&fakeStore{task: spent, agent: seededAgent()}, allowingCapability(), taskPayload(t, "task-1")); got != settled {
+		t.Fatalf("disposition = %v, want settled", got)
+	}
+
+	if got := handle(&fakeStore{task: runnableTask(), agent: seededAgent()}, allowingCapability(), taskPayload(t, "task-2")); got != settled {
+		t.Fatalf("disposition = %v, want settled", got)
+	}
+
+	var gathered metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &gathered); err != nil {
+		t.Fatalf("collecting metrics: %v", err)
+	}
+
+	byOutcome := map[string]int64{}
+	for _, scope := range gathered.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != "legion.investigation.tasks" {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("metric is %T, want an int64 sum", m.Data)
+			}
+			for _, point := range sum.DataPoints {
+				outcome, _ := point.Attributes.Value("outcome")
+				byOutcome[outcome.AsString()] += point.Value
+			}
+		}
+	}
+
+	if byOutcome["dead_letter"] < 1 {
+		t.Errorf("dead_letter count = %d, want at least 1: the counter never reached a meter, "+
+			"so the gap ADR-020 was meant to close is still silent (outcomes seen: %v)",
+			byOutcome["dead_letter"], byOutcome)
+	}
+	if byOutcome["completed"] < 1 {
+		t.Errorf("completed count = %d, want at least 1 (outcomes seen: %v)", byOutcome["completed"], byOutcome)
 	}
 }
 

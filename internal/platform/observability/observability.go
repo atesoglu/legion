@@ -149,3 +149,5 @@ func Decision(d string) attribute.KeyValue { return attribute.String("decision",
 func Outcome(o string) attribute.KeyValue  { return attribute.String("outcome", o) }
 func Reason(r string) attribute.KeyValue   { return attribute.String("reason", r) }
 func Stage(s string) attribute.KeyValue    { return attribute.String("stage", s) }
+func State(s string) attribute.KeyValue    { return attribute.String("state", s) }
+func Verdict(v string) attribute.KeyValue  { return attribute.String("verdict", v) }

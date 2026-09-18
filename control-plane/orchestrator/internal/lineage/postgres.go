@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/atesoglu/legion/internal/platform/migrate"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
 )
 
@@ -25,6 +26,16 @@ const migrationsTable = "schema_migrations_lineage"
 // writeTimeout bounds a single lineage write or migration run, so a slow or
 // unreachable database degrades lineage rather than leaking goroutines.
 const writeTimeout = 5 * time.Second
+
+// entries counts what became of every lineage entry. A dropped entry was
+// previously logged and nothing else, which made "the writer has no
+// backpressure signal" a documented gap rather than something anyone could
+// see (ADR-020). There is no decision_id attribute and there must not be:
+// per-decision questions are answered from the table, not from a metric.
+var entries = observability.NewCounter(
+	"legion.lineage.entries",
+	"Lineage entries by what became of them: written, dropped before the queue, or failed to persist.",
+)
 
 // PostgresStore is the Store used in every deployment. See ADR-007 and
 // ADR-018 (the normalised schema this writes into).
@@ -78,6 +89,7 @@ func (s *PostgresStore) write(entry *riskv1.DecisionLineage) {
 	raw, err := proto.Marshal(entry)
 	if err != nil {
 		s.log.Warn("lineage entry could not be serialised", "decision_id", entry.GetDecisionId(), "error", err)
+		entries.Inc(context.Background(), observability.Outcome("failed"))
 		return
 	}
 	r := buildRows(entry, raw)
@@ -99,7 +111,10 @@ func (s *PostgresStore) write(entry *riskv1.DecisionLineage) {
 	})
 	if err != nil {
 		s.log.Warn("lineage write failed", "decision_id", entry.GetDecisionId(), "error", err)
+		entries.Inc(ctx, observability.Outcome("failed"))
+		return
 	}
+	entries.Inc(ctx, observability.Outcome("written"))
 }
 
 func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
@@ -176,6 +191,7 @@ func (s *PostgresStore) Record(entry *riskv1.DecisionLineage) {
 	case s.queue <- entry:
 	default:
 		s.log.Warn("lineage queue full; dropping entry", "decision_id", entry.GetDecisionId())
+		entries.Inc(context.Background(), observability.Outcome("dropped"))
 	}
 }
 

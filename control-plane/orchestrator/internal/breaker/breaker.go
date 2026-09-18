@@ -7,8 +7,11 @@
 package breaker
 
 import (
+	"context"
 	"sync"
 	"time"
+
+	"github.com/atesoglu/legion/internal/platform/observability"
 )
 
 // State is the breaker's position in its cycle.
@@ -172,10 +175,25 @@ func (b *Breaker) trip() {
 	b.openedAt = b.now()
 	b.successes, b.failures = 0, 0
 	b.windowStart = b.now()
+	transitions.Inc(context.Background(), observability.State("open"))
 }
 
 func (b *Breaker) reset() {
 	b.state = Closed
 	b.successes, b.failures = 0, 0
 	b.windowStart = b.now()
+	transitions.Inc(context.Background(), observability.State("closed"))
 }
+
+// transitions counts breaker state changes. An agent being cut off is a
+// degraded decision for every request until it closes again, and the only
+// previous evidence was a reason code buried in individual lineage rows.
+//
+// agent_id is deliberately absent even though the decision-path agent set is
+// small: this type is generic and the orchestrator holds one breaker per
+// agent, so the caller would have to supply it, and no caller has a bounded
+// set to promise. Which agent tripped is answered from agent_evaluations.
+var transitions = observability.NewCounter(
+	"legion.breaker.transitions",
+	"Circuit breaker state changes, by the state entered.",
+)

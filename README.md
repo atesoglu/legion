@@ -29,7 +29,7 @@ investigation, capability-checked at every tool call.
 | Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
 | Capability runtime | Full enforcement pipeline (identity, grant, scope, constraint, budget; ADR-005) against a static manifest; one real caller (`investigation/worker`); no caller yet on the fixed-enum path (deterministic agents are push-style, behavioural agent doesn't exist) |
 | Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017), every tool call checked by the capability runtime; `RegisterAgent` API and real tool/model calls not implemented |
-| Observability | **Decided, not built** (ADR-020): OTLP push to a collector; logs and traces to Elasticsearch, read in Kibana; metrics to Prometheus, explored in Grafana; per-investigation cost to PostgreSQL. Nothing emits, collects or stores any of it yet |
+| Observability | **Partly built** (ADR-020): the Go services emit counters for the previously silent failures — lineage and case-trigger drops, dead-lettered tasks, capability verdicts, dedup outcomes, breaker transitions — over OTLP to a collector. Nothing collects them: no collector, Prometheus, Grafana, Elasticsearch or alerting exists yet, export is off unless `LEGION_OTLP_ENDPOINT` is set, and there is no tracing. Zone 3 emits nothing by design |
 | Behavioural agent, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is

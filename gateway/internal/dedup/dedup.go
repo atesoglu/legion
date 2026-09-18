@@ -18,8 +18,20 @@ import (
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/atesoglu/legion/internal/platform/observability"
 	gatewayv1 "github.com/atesoglu/legion/protocol/gen/go/legion/gateway/v1"
 	riskv1 "github.com/atesoglu/legion/protocol/gen/go/legion/risk/v1"
+)
+
+// claims counts what each claim turned out to be. threat-model T-13's
+// detection column asks for "duplicate-subject rate; decision reuse
+// attempts", and neither was instrumented (ADR-020).
+//
+// caller_id is not an attribute: it is caller-controlled and therefore
+// unbounded, which is the label rule's other half.
+var claims = observability.NewCounter(
+	"legion.gateway.dedup.claims",
+	"Idempotency claims by what they turned out to be: new, replayed, conflict or in_flight.",
 )
 
 // Retention is how long a resubmission is recognised as a duplicate rather
@@ -73,6 +85,7 @@ func (s *Store) Claim(
 		return nil, false, fmt.Errorf("dedup: claim failed: %w", err)
 	}
 	if claimed {
+		claims.Inc(ctx, observability.Outcome("new"))
 		return nil, false, nil
 	}
 
@@ -81,9 +94,11 @@ func (s *Store) Claim(
 		return nil, false, fmt.Errorf("dedup: read failed: %w", err)
 	}
 	if len(raw) < sha256.Size {
+		claims.Inc(ctx, observability.Outcome("in_flight"))
 		return nil, false, ErrInFlight
 	}
 	if !bytes.Equal(raw[:sha256.Size], fp) {
+		claims.Inc(ctx, observability.Outcome("conflict"))
 		return nil, false, ErrConflict
 	}
 
@@ -91,6 +106,7 @@ func (s *Store) Claim(
 	if err := proto.Unmarshal(raw[sha256.Size:], response); err != nil {
 		return nil, false, fmt.Errorf("dedup: stored response is corrupt: %w", err)
 	}
+	claims.Inc(ctx, observability.Outcome("replayed"))
 	return response, true, nil
 }
 

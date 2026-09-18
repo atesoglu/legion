@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -29,11 +30,25 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/atesoglu/legion/internal/platform/config"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	"github.com/atesoglu/legion/investigation/internal/queue"
 	"github.com/atesoglu/legion/investigation/internal/store"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	investigationv1 "github.com/atesoglu/legion/protocol/gen/go/legion/investigation/v1"
+)
+
+// taskOutcomes counts how tasks ended. Reaching DEAD_LETTER was previously
+// silent -- no alert, no metric, nothing reading the row (ADR-020).
+//
+// There is deliberately no agent_id attribute, even though the decision path
+// uses one: investigation-model.md section 6 anticipates thousands of logical
+// agents, so agent_id is not the bounded set the label rule requires. "Which
+// agent is dead-lettering" is a per-entity question and is answered from the
+// tasks table, which is what it is for.
+var taskOutcomes = observability.NewCounter(
+	"legion.investigation.tasks",
+	"Investigation tasks by terminal outcome: completed, retrying, failed or dead_lettered.",
 )
 
 const (
@@ -288,6 +303,7 @@ func handleTask(
 		log.Warn("task completion failed", "task_id", task.TaskID, "error", err)
 		return retry
 	}
+	taskOutcomes.Inc(ctx, observability.Outcome("completed"))
 
 	return finishInvestigation(ctx, st, task, log)
 }
@@ -335,6 +351,7 @@ func failTask(ctx context.Context, st taskStore, task *store.Task, status string
 			"task_id", task.TaskID, "status", status, "error", err)
 		return retry
 	}
+	taskOutcomes.Inc(ctx, observability.Outcome(strings.ToLower(status)))
 	if !store.IsTerminal(status) {
 		return retry
 	}
