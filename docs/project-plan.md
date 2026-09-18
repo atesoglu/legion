@@ -1617,6 +1617,14 @@ Produce:
 * known limitations;
 * "What Didn't Work" documentation.
 
+The benchmark work has a starting list. `architecture.md` §9's "Scaling limits
+that are reasoned, not measured" names four properties of the code that are
+plausible limits under load and that nothing has yet observed — the serial,
+unbatched lineage writer; the per-agent breaker mutex; the dedup key
+allocation; and the request coalescing a feature cache will need once one
+exists. Each says what is known and what is only inferred, so a benchmark can
+confirm or dismiss them rather than rediscover them.
+
 Release under:
 
 **MIT License**

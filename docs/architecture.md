@@ -402,6 +402,50 @@ returns the original response; a reused key with a different body is
 rejected. Case creation (Zone 6) can build on this key from its first version
 instead of needing a retrofit.
 
+### Scaling limits that are reasoned, not measured
+
+These four are different in kind from the gaps above, and are separated for
+that reason. Each is a property of the code that can be read off it, and each
+is a plausible limit under load. **None has been observed**, because Legion
+has never been run under load: the only measurement that exists is a
+single-threaded local profile (`deadline-model.md` §7) explicitly recorded as
+a floor. They are written down so that a future benchmark knows where to look
+first, not because anything is known to be wrong.
+
+They were raised in an external review whose other findings did not survive
+being checked against the code. That is not a reason to discard these, and it
+is a reason to state precisely what is and is not known about each.
+
+- **The lineage writer does not batch.** One goroutine writes one entry per
+  transaction across five tables. Its inbound queue holds 256 entries and
+  drops beyond that, so sustained write rates above what a single serial
+  writer sustains would show up as a rising
+  `legion.lineage.entries{outcome="dropped"}` rather than as latency — the
+  decision path is unaffected by design (ADR-007). Batched inserts or `COPY`
+  are the obvious remedy. The rate at which this begins is unmeasured, and
+  the counter that would reveal it is emitted but not yet collected.
+- **The circuit breaker serialises on a mutex.** One `sync.Mutex` per agent,
+  not one globally, so contention is already striped by the dimension that
+  matters; with three registered agents that is three locks, each taken twice
+  per request (`Allow` then `Record`). Atomic compare-and-swap would remove
+  it. Whether six lock acquisitions per decision matter at high core counts
+  is unmeasured.
+- **The dedup key allocates.** `recordKey` builds `"idem:" + caller + ":" +
+  key` on each of up to three calls per request (claim, store or release).
+  Hashing the bytes directly would avoid it. Against a measured gateway p50 of
+  3.56 ms this is not currently material; under GC pressure at a load nobody
+  has generated, it is unquantified.
+- **A feature cache will need request coalescing.** This one is not a limit
+  today, because the cache tier ADR-007 calls for does not exist at all. When
+  it is built, concurrent misses on the same key must be collapsed into one
+  downstream fetch, or an expiry becomes a synchronised stampede against the
+  store. Recorded here so the constraint arrives with the feature rather than
+  after it.
+
+Acting on any of these before Phase 7's benchmarks exist would be optimising
+against an imagined load profile, which is the same mistake as claiming a
+latency figure without measuring it.
+
 Observability is partly built. ADR-020 decides where each signal goes — OTLP
 push to a collector; logs and traces to Elasticsearch, read in Kibana; metrics
 to Prometheus, explored in Grafana; per-investigation cost to PostgreSQL — and
