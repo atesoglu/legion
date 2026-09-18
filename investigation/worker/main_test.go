@@ -82,6 +82,7 @@ type fakeStore struct {
 	getTaskErr       error
 	claimErr         error
 	agentErr         error
+	evidenceErr      error
 	completeTaskErr  error
 	failErr          error
 	investigationErr error
@@ -90,7 +91,7 @@ type fakeStore struct {
 
 	claims               int
 	completions          int
-	failures             []bool
+	failures             []string
 	findings             int
 	investigationChecks  int
 	auditEvents          int
@@ -109,7 +110,7 @@ func (f *fakeStore) ClaimTask(context.Context, string) (uint32, error) {
 		return 0, f.claimErr
 	}
 	f.claims++
-	return 1, nil
+	return f.task.Attempt + 1, nil
 }
 
 func (f *fakeStore) CompleteTask(context.Context, string) error {
@@ -120,11 +121,11 @@ func (f *fakeStore) CompleteTask(context.Context, string) error {
 	return nil
 }
 
-func (f *fakeStore) FailTask(_ context.Context, _ string, deadLetter bool) error {
+func (f *fakeStore) FailTask(_ context.Context, _, status string) error {
 	if f.failErr != nil {
 		return f.failErr
 	}
-	f.failures = append(f.failures, deadLetter)
+	f.failures = append(f.failures, status)
 	return nil
 }
 
@@ -158,6 +159,9 @@ func (f *fakeStore) InsertToolExecution(
 }
 
 func (f *fakeStore) InsertEvidence(context.Context, string, string, map[string]any) (string, error) {
+	if f.evidenceErr != nil {
+		return "", f.evidenceErr
+	}
 	return "evidence-1", nil
 }
 
@@ -286,20 +290,91 @@ func TestASuccessfulTaskIsAcknowledgedAndClosesItsInvestigation(t *testing.T) {
 	}
 }
 
-func TestAFailedTaskStillClosesItsInvestigation(t *testing.T) {
-	// An agent that is not registered fails its task permanently. The
-	// investigation it belonged to is just as finished as a successful one,
-	// so the completion check must still run or the case hangs forever.
+func TestAPermanentlyFailedTaskStillClosesItsInvestigation(t *testing.T) {
+	// An agent that is not registered fails its task permanently: no number
+	// of retries registers it. The investigation it belonged to is just as
+	// finished as a successful one, so the completion check must still run
+	// or the case hangs forever.
 	st := &fakeStore{task: runnableTask(), agent: nil, investigationCompleted: true}
 
 	if got := handle(st, allowingCapability(), taskPayload(t, "task-1")); got != settled {
 		t.Fatalf("disposition = %v, want settled", got)
 	}
-	if len(st.failures) != 1 || !st.failures[0] {
-		t.Fatalf("failures = %v, want one dead-lettered task", st.failures)
+	if len(st.failures) != 1 || st.failures[0] != store.TaskFailed {
+		t.Fatalf("failures = %v, want [FAILED]", st.failures)
 	}
 	if st.investigationChecks != 1 {
 		t.Fatalf("investigationChecks = %d, want 1", st.investigationChecks)
+	}
+}
+
+func TestATransientFailureIsRecordedRetryingAndLeftUnacknowledged(t *testing.T) {
+	st := &fakeStore{
+		task:        runnableTask(),
+		agent:       seededAgent(),
+		evidenceErr: errors.New("connection refused"),
+	}
+
+	if got := handle(st, allowingCapability(), taskPayload(t, "task-1")); got != retry {
+		t.Fatalf("disposition = %v, want retry: the pending message is the retry mechanism", got)
+	}
+	if len(st.failures) != 1 || st.failures[0] != store.TaskRetrying {
+		t.Fatalf("failures = %v, want [RETRYING]", st.failures)
+	}
+	if st.investigationChecks != 0 {
+		t.Fatalf("investigationChecks = %d, want 0: a retrying task is still open", st.investigationChecks)
+	}
+}
+
+func TestTheFinalAttemptIsDeadLetteredRatherThanRetried(t *testing.T) {
+	task := runnableTask()
+	task.Attempt = 2 // claiming makes this attempt 3 of 3
+	st := &fakeStore{
+		task:                   task,
+		agent:                  seededAgent(),
+		evidenceErr:            errors.New("connection refused"),
+		investigationCompleted: true,
+	}
+
+	if got := handle(st, allowingCapability(), taskPayload(t, "task-1")); got != settled {
+		t.Fatalf("disposition = %v, want settled: the attempts are spent", got)
+	}
+	if len(st.failures) != 1 || st.failures[0] != store.TaskDeadLetter {
+		t.Fatalf("failures = %v, want [DEAD_LETTER]", st.failures)
+	}
+	if st.investigationChecks != 1 {
+		t.Fatalf("investigationChecks = %d, want 1", st.investigationChecks)
+	}
+}
+
+func TestATaskRedeliveredWithNoAttemptsLeftIsDeadLetteredWithoutRunning(t *testing.T) {
+	task := runnableTask()
+	task.Status = store.TaskRunning
+	task.Attempt = 3
+	st := &fakeStore{task: task, agent: seededAgent()}
+
+	if got := handle(st, allowingCapability(), taskPayload(t, "task-1")); got != settled {
+		t.Fatalf("disposition = %v, want settled", got)
+	}
+	if st.claims != 0 || st.findings != 0 {
+		t.Fatalf("claims=%d findings=%d, want 0/0", st.claims, st.findings)
+	}
+	if len(st.failures) != 1 || st.failures[0] != store.TaskDeadLetter {
+		t.Fatalf("failures = %v, want [DEAD_LETTER]", st.failures)
+	}
+}
+
+func TestARetryingTaskIsClaimedAgainOnRedelivery(t *testing.T) {
+	task := runnableTask()
+	task.Status = store.TaskRetrying
+	task.Attempt = 1
+	st := &fakeStore{task: task, agent: seededAgent()}
+
+	if got := handle(st, allowingCapability(), taskPayload(t, "task-1")); got != settled {
+		t.Fatalf("disposition = %v, want settled", got)
+	}
+	if st.claims != 1 || st.completions != 1 {
+		t.Fatalf("claims=%d completions=%d, want 1/1: RETRYING is not terminal", st.claims, st.completions)
 	}
 }
 
@@ -319,7 +394,7 @@ func TestARedeliveredTerminalTaskRerunsOnlyTheCompletionCheck(t *testing.T) {
 	}
 }
 
-func TestADeniedToolDeadLettersWithoutRetrying(t *testing.T) {
+func TestADeniedToolFailsPermanentlyWithoutSpendingAttempts(t *testing.T) {
 	st := &fakeStore{task: runnableTask(), agent: seededAgent()}
 	denied := &fakeCapabilityClient{
 		verdict: agentv1.CapabilityVerdict_CAPABILITY_VERDICT_DENIED_NOT_GRANTED,
@@ -329,8 +404,8 @@ func TestADeniedToolDeadLettersWithoutRetrying(t *testing.T) {
 	if got := handle(st, denied, taskPayload(t, "task-1")); got != settled {
 		t.Fatalf("disposition = %v, want settled (a policy denial is not a transient fault)", got)
 	}
-	if len(st.failures) != 1 || !st.failures[0] {
-		t.Fatalf("failures = %v, want one dead-lettered task", st.failures)
+	if len(st.failures) != 1 || st.failures[0] != store.TaskFailed {
+		t.Fatalf("failures = %v, want [FAILED]: retrying asks the same broker the same question", st.failures)
 	}
 	if st.deniedToolExecutions != 1 {
 		t.Fatalf("deniedToolExecutions = %d, want 1: a denial must still be auditable", st.deniedToolExecutions)

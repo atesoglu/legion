@@ -43,12 +43,18 @@ const (
 
 	TaskPending    = "PENDING"
 	TaskRunning    = "RUNNING"
+	TaskRetrying   = "RETRYING"
 	TaskCompleted  = "COMPLETED"
 	TaskFailed     = "FAILED"
 	TaskDeadLetter = "DEAD_LETTER"
 )
 
 // terminal task states: once in one of these, a task never transitions again.
+//
+// RETRYING is deliberately absent. It is the state of a task whose attempt
+// failed for a reason another attempt might survive; FAILED is reserved for
+// a failure no retry can change, and DEAD_LETTER for one that ran out of
+// attempts trying.
 var terminalTaskStates = map[string]bool{
 	TaskCompleted:  true,
 	TaskFailed:     true,
@@ -356,12 +362,10 @@ func (s *Store) CompleteTask(ctx context.Context, taskID string) error {
 	return s.setTaskStatus(ctx, taskID, TaskCompleted)
 }
 
-// FailTask marks a task FAILED, or DEAD_LETTER when its attempts are spent.
-func (s *Store) FailTask(ctx context.Context, taskID string, deadLetter bool) error {
-	status := TaskFailed
-	if deadLetter {
-		status = TaskDeadLetter
-	}
+// FailTask records why a task stopped: TaskRetrying when another attempt is
+// owed, TaskFailed when no retry can change the outcome, TaskDeadLetter when
+// the attempts are spent.
+func (s *Store) FailTask(ctx context.Context, taskID, status string) error {
 	return s.setTaskStatus(ctx, taskID, status)
 }
 
@@ -377,7 +381,8 @@ func (s *Store) setTaskStatus(ctx context.Context, taskID, status string) error 
 
 // OpenTaskCount returns how many tasks for an investigation have not yet
 // reached a terminal state, so a worker can tell whether it just finished
-// the last one.
+// the last one. A RETRYING task is open: its investigation is not finished
+// until the retry resolves one way or the other.
 func (s *Store) OpenTaskCount(ctx context.Context, investigationID string) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()

@@ -94,19 +94,15 @@ transaction.
 ### Task
 
 ```text
-PENDING → RUNNING → COMPLETED
-             │
-             ├──► WAITING (needs a follow-up tool call or agent)
-             │
-             └──► lease expiry / worker crash
+PENDING ──► RUNNING ──► COMPLETED
+               │
+               ├──► FAILED        no retry can change the outcome
+               │
+               └──► RETRYING      another attempt may survive it
                        │
-                       ▼
-                   RETRYING → PENDING
+                       ├──► lease expiry redelivers ──► RUNNING
                        │
-                 max_attempts exceeded
-                       │
-                       ▼
-                     FAILED → DEAD_LETTER
+                       └──► attempts spent ──────────► DEAD_LETTER
 ```
 
 Postgres, not the queue, is the source of truth for this state machine. A
@@ -120,13 +116,24 @@ the lease recovers it. The cost of that choice is that a redelivery re-runs
 the agent's work, which at-least-once delivery implies anyway and
 `max_attempts` bounds.
 
-**The diagram above is the intended state machine, not yet the implemented
-one.** The implementation has no `WAITING` or `RETRYING` task state, and it
-treats `FAILED` as terminal rather than as a step on the way to a retry, so
-the `max_attempts` path to `DEAD_LETTER` is currently unreachable: the first
-failure ends the task. Retry today comes only from lease recovery of an
-unacknowledged message, not from a failed task being re-queued. Reconciling
-the two is open work.
+The three ways a task can stop are deliberately distinct, because they mean
+different things to whoever reads the row later:
+
+| State | Meaning | Terminal | Message |
+|---|---|---|---|
+| `RETRYING` | This attempt failed for a reason another attempt might survive — a database blip, a tool error. | No | Left pending; lease recovery brings it back. |
+| `FAILED` | No number of retries changes the answer: the agent is not registered, or the capability runtime denied its tool. | Yes | Acknowledged. |
+| `DEAD_LETTER` | Retried until `max_attempts` was spent. | Yes | Acknowledged. |
+
+**There is no separate retry queue, and no `RETRYING → PENDING` re-dispatch.**
+A retry is just the lease recovery that already covers a crashed worker: the
+message was never acknowledged, so `XAUTOCLAIM` hands it back and the worker
+claims the task again, incrementing `attempt`. One mechanism covers both a
+crash and a failure, which is why neither needs the controller's involvement.
+
+`WAITING` is designed (it is in the `TaskStatus` proto enum) but not built:
+no agent can request a follow-up tool call or a second agent yet, because
+every agent's tool call is still mocked. Nothing writes that state.
 
 ### Worker
 
@@ -265,7 +272,13 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
   proto comment), not `(caller, idempotency_key)` as the gateway's own dedup
   is; two different callers reusing the same key would collide into one
   case. This is a known, accepted gap, not an oversight discovered later.
-- It does not claim the task state machine in §4 is implemented as drawn.
-  `WAITING` and `RETRYING` do not exist in code, and a failed task is
-  terminal, so an investigation always closes out — but it closes out with a
-  failed task rather than a retried one.
+- It does not claim the task state machine in §4 is fully implemented.
+  `WAITING` exists in the proto enum but nothing writes it, because no agent
+  can request follow-up work while every tool call is mocked. Retry backoff
+  is the queue's fixed 30-second lease, not a policy: there is no
+  exponential backoff, no per-agent retry budget, and no alert when a task
+  reaches `DEAD_LETTER`.
+- It does not claim a retried task re-runs cleanly. A task that failed after
+  writing some of its evidence writes it again on the next attempt, because
+  the agent's writes are not transactional and nothing deduplicates them.
+  At-least-once delivery implies this; `max_attempts` bounds it.

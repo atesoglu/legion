@@ -147,7 +147,7 @@ type taskStore interface {
 	GetTask(ctx context.Context, taskID string) (*store.Task, error)
 	ClaimTask(ctx context.Context, taskID string) (uint32, error)
 	CompleteTask(ctx context.Context, taskID string) error
-	FailTask(ctx context.Context, taskID string, deadLetter bool) error
+	FailTask(ctx context.Context, taskID, status string) error
 	GetEnabledAgent(ctx context.Context, agentID string) (*store.AgentDefinition, error)
 	CompleteInvestigationIfDone(ctx context.Context, investigationID string) (bool, string, error)
 	InsertAuditEvent(ctx context.Context, caseID, eventType string, detail map[string]any) error
@@ -248,10 +248,11 @@ func handleTask(
 		return finishInvestigation(ctx, st, task, log)
 	}
 	if task.Attempt >= task.MaxAttempts {
-		return failTask(ctx, st, task, true, log)
+		return failTask(ctx, st, task, store.TaskDeadLetter, log)
 	}
 
-	if _, err := st.ClaimTask(ctx, task.TaskID); err != nil {
+	attempt, err := st.ClaimTask(ctx, task.TaskID)
+	if err != nil {
 		log.Warn("task claim failed", "task_id", task.TaskID, "error", err)
 		return retry
 	}
@@ -259,21 +260,24 @@ func handleTask(
 	agent, err := st.GetEnabledAgent(ctx, task.AgentID)
 	if err != nil {
 		log.Warn("agent lookup failed", "task_id", task.TaskID, "agent_id", task.AgentID, "error", err)
-		return failTask(ctx, st, task, task.Attempt+1 >= task.MaxAttempts, log)
+		return failTask(ctx, st, task, transientStatus(attempt, task.MaxAttempts), log)
 	}
 	if agent == nil {
 		log.Warn("task references an agent that is not registered or not enabled",
 			"task_id", task.TaskID, "agent_id", task.AgentID)
-		return failTask(ctx, st, task, true, log)
+		return failTask(ctx, st, task, store.TaskFailed, log)
 	}
 
 	if err := runAgent(ctx, st, capability, task, agent, log); err != nil {
-		log.Warn("agent execution failed", "task_id", task.TaskID, "agent_id", task.AgentID, "error", err)
-		// A capability denial is a policy decision, not a transient fault:
-		// retrying would ask the same broker the same question and get the
-		// same answer, so it goes straight to DEAD_LETTER rather than
-		// waiting out max_attempts.
-		return failTask(ctx, st, task, errors.Is(err, errCapabilityDenied) || task.Attempt+1 >= task.MaxAttempts, log)
+		log.Warn("agent execution failed", "task_id", task.TaskID, "agent_id", agent.AgentID, "error", err)
+		if errors.Is(err, errCapabilityDenied) {
+			// A capability denial is a policy decision, not a transient
+			// fault: asking the same broker the same question again gets the
+			// same answer, so it fails permanently rather than spending
+			// attempts to arrive there.
+			return failTask(ctx, st, task, store.TaskFailed, log)
+		}
+		return failTask(ctx, st, task, transientStatus(attempt, task.MaxAttempts), log)
 	}
 
 	if err := st.CompleteTask(ctx, task.TaskID); err != nil {
@@ -310,11 +314,28 @@ func finishInvestigation(ctx context.Context, st taskStore, task *store.Task, lo
 	return settled
 }
 
-func failTask(ctx context.Context, st taskStore, task *store.Task, deadLetter bool, log *slog.Logger) disposition {
-	if err := st.FailTask(ctx, task.TaskID, deadLetter); err != nil {
+// transientStatus decides whether a failure that another attempt might
+// survive earns one, given the attempt just spent.
+func transientStatus(attempt, maxAttempts uint32) string {
+	if attempt >= maxAttempts {
+		return store.TaskDeadLetter
+	}
+	return store.TaskRetrying
+}
+
+// failTask records why a task stopped and reports whether that conclusion is
+// final. There is no separate re-queue: a RETRYING task's message is simply
+// left in the pending list, and the lease recovery that already covers a
+// crashed worker (ADR-017 §3) brings it back for the next attempt.
+func failTask(ctx context.Context, st taskStore, task *store.Task, status string, log *slog.Logger) disposition {
+	if err := st.FailTask(ctx, task.TaskID, status); err != nil {
 		// Nothing durable records the failure, so the task would be left
 		// mid-flight if this message were acknowledged.
-		log.Warn("marking task failed did not succeed", "task_id", task.TaskID, "error", err)
+		log.Warn("marking task failed did not succeed",
+			"task_id", task.TaskID, "status", status, "error", err)
+		return retry
+	}
+	if !store.IsTerminal(status) {
 		return retry
 	}
 	return finishInvestigation(ctx, st, task, log)

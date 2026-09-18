@@ -1933,25 +1933,26 @@ gets *looked at*.
 ## 45.2 Task lifecycle
 
 ```text
-PENDING → RUNNING → COMPLETED
-             │
-             ├──► WAITING (needs a follow-up tool call or agent)
-             │
-             └──► lease expiry / crash
+PENDING ──► RUNNING ──► COMPLETED
+               │
+               ├──► FAILED        no retry can change the outcome
+               │
+               └──► RETRYING      another attempt may survive it
                        │
-                       ▼
-                   RETRYING → PENDING
+                       ├──► lease expiry redelivers ──► RUNNING
                        │
-                 max_attempts exceeded
-                       │
-                       ▼
-                     FAILED → DEAD_LETTER
+                       └──► attempts spent ──────────► DEAD_LETTER
 ```
 
 The database (not the queue) is the source of truth for this state machine,
 per ADR-017. A worker transitions a task to `RUNNING` in Postgres before doing
 any work, so a crash between claiming a task and finishing it is visible and
 recoverable rather than silently lost.
+
+There is no separate retry queue: a `RETRYING` task's queue message is simply
+never acknowledged, so the same lease recovery that covers a crashed worker
+redelivers it. `WAITING` is in the `TaskStatus` enum but unbuilt — see
+`investigation-model.md` §4.
 
 ## 45.3 What the controller is not
 
