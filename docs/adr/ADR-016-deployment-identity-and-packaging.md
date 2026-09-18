@@ -68,10 +68,11 @@ without an intermediate mapping that could itself be wrong.
 ### 2. Zones are namespaces
 
 ```text
-legion-edge      gateway
-legion-control   orchestrator · capability
-legion-data      sentinel · velocity · device · geo
-legion-agents    behavioral · inference
+legion-edge           gateway
+legion-control        orchestrator · capability
+legion-data           sentinel · velocity · device · geo
+legion-agents         behavioral · inference
+legion-investigation  investigation-controller · investigation-worker
 ```
 
 Zone 5 is external to the cluster or lives in its own namespace with no
@@ -92,11 +93,19 @@ label fails open.
 ### 3. Two Dockerfiles, parameterised, root context
 
 ```text
-deploy/docker/go.Dockerfile      ARG SERVICE  → gateway · orchestrator · capability · behavioral
+deploy/docker/go.Dockerfile      ARG SERVICE  → gateway · orchestrator · capability ·
+                                                investigation-controller ·
+                                                investigation-worker · behavioral
 deploy/docker/rust.Dockerfile    ARG CRATE    → sentinel · velocity · device · geo
 ```
 
-Six images from two files. Both build from the repository root; the `Dockerfile`
+Ten images from two files, of which nine are buildable today: `behavioral`
+is declared here because the identifier is fixed by §1, but Phase 3 builds it.
+The CI check in §4 compares declared services against buildable binaries and
+must therefore distinguish declared-and-planned from declared-and-missing
+rather than treating both as a failure.
+
+Both files build from the repository root; the `Dockerfile`
 lives under `deploy/docker/` rather than beside `main.go` specifically so that
 the root context is obvious rather than surprising.
 
@@ -117,6 +126,8 @@ change, and slow image builds are skipped image builds.
 velocity:     { zone: data,    language: rust, port: 9300, agent: true }
 sentinel:     { zone: data,    language: rust, port: 9600, agent: false }
 gateway:      { zone: edge,    language: go,   port: 9100, agent: false }
+investigation-worker:
+              { zone: investigation, language: go, port: 9800, agent: false }
 ```
 
 One Helm chart iterates over it, with per-service overrides for the cases that

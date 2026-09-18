@@ -37,6 +37,7 @@ history.
 | [017](ADR-017-investigation-plane.md) | Investigation plane — zone, agent registry and task queue | Accepted | 2 |
 | [018](ADR-018-normalised-lineage-schema.md) | Normalised reproducibility schema (supersedes commit `47edb19`) | Accepted | 2 |
 | [019](ADR-019-transaction-idempotency.md) | Transaction idempotency keys | Accepted | 2 |
+| [020](ADR-020-observability-signals-and-destinations.md) | Observability signals and their destinations | Accepted | 4 |
 
 "Accepted" means the decision has been made and is binding on implementation.
 It does not mean the thing has been built; the phase column says when it is

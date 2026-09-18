@@ -21,7 +21,7 @@ investigation, capability-checked at every tool call.
 | | |
 |---|---|
 | Contracts | Defined, compiling, linted |
-| Documentation | Architecture, domain, decision, deadline, failure, capability, security, threat model, 19 ADRs |
+| Documentation | Architecture, domain, decision, deadline, failure, capability, security, threat model, 20 ADRs |
 | Decision path | Gateway → orchestrator → velocity, device, geo → sentinel |
 | Edge controls | Authentication, validation, per-caller rate limiting, deadline origin |
 | Feature store | Redis reads with explicit freshness; **nothing writes features yet** |
@@ -98,7 +98,7 @@ explicit, observable outcome.
 | [Capability model](docs/capability-model.md) | What an agent may do, and how it is enforced |
 | [Security boundaries](docs/security-boundaries.md) | Trust zones, data handling, regulatory positioning |
 | [Threat model](docs/threat-model.md) | Threats with mitigation, detection and residual risk |
-| [ADRs](docs/adr/README.md) | Nineteen decisions with alternatives and trade-offs |
+| [ADRs](docs/adr/README.md) | Twenty decisions with alternatives and trade-offs |
 | [Project plan](docs/project-plan.md) | The full specification and phase plan |
 
 ## Repository layout
