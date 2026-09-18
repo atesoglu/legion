@@ -1,0 +1,18 @@
+# The Rust workspace's target/ directory alone is several gigabytes, and
+# sending it to the daemon took 147 seconds before this file existed. Nothing
+# excluded here is needed to compile a binary.
+target/
+.git/
+.github/
+docs/
+
+# Build output and editor state.
+*.exe
+*.test
+.vscode/
+.idea/
+
+# Nothing under here is read by a build; the Dockerfiles take their parameters
+# from the command line, and services.yaml is consumed by the Go test that
+# checks it rather than by the image.
+deploy/

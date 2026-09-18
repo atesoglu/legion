@@ -1512,9 +1512,10 @@ Progress within the first half:
 | OpenTelemetry pipeline in the shared process lifecycle | Built |
 | Counters for the previously silent failures | Built |
 | Latency histograms, end to end and per stage and agent | Built |
-| ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Not started |
+| ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Built |
 | `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Not started |
 | Tracing and correlation identifiers | Not started |
+| Kubernetes manifests, Helm, network policies, KEDA | Deferred (cluster half) |
 
 Nothing collects the signals that are emitted, so no figure from §28's list
 can be reported yet. Zone 3 emits nothing by design (ADR-020).

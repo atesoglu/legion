@@ -325,10 +325,12 @@ Directories from the long-term plan that have no implementation purpose yet —
 `inference/`, `feature-store/`, `simulator/`, `replay/`, `evaluation/`,
 `benchmarks/`, `policy/`, `model-registry/`, `observability/`,
 `infrastructure/`, `security/` — are deliberately absent. Empty directories
-that promise work are worse than no directories. `deploy/` is the next to
-arrive: ADR-016 fixes its shape (`deploy/docker/`, `deploy/services.yaml`)
-and ADR-020 adds `deploy/observability/`, but neither exists yet, and by the
-rule above neither should until something is written into it.
+that promise work are worse than no directories.
+
+`deploy/` has arrived, holding what ADR-016 specifies and nothing else:
+`deploy/services.yaml` declares the service set, and `deploy/docker/` holds
+the two parameterised Dockerfiles that build every image from it. Manifests,
+Helm charts and `deploy/observability/` are not there yet, by the same rule.
 
 ## 9. What is not built
 
