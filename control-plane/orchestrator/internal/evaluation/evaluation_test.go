@@ -11,6 +11,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/breaker"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
@@ -695,4 +700,68 @@ func TestAShadowReviewOpensNoCase(t *testing.T) {
 // wants; only the shadow tests spell the struct out.
 func evaluationOf(subject *riskv1.Transaction) Request {
 	return Request{EvaluationID: "e1", Subject: subject}
+}
+
+// TestEveryStageAndAgentIsTimed proves the histograms reach a real meter from
+// the place they are declared, and that no stage is missing. A stage that is
+// never recorded looks identical to a stage that is always fast, which is the
+// failure mode worth a test rather than the arithmetic.
+func TestEveryStageAndAgentIsTimed(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	provider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	otel.SetMeterProvider(provider)
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+
+	c := coordinator(t, healthy(), &fakeSentinel{})
+	if _, _, err := c.Evaluate(context.Background(), evaluationOf(subject())); err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+
+	var gathered metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &gathered); err != nil {
+		t.Fatalf("collecting metrics: %v", err)
+	}
+
+	stages := attributeValues(t, gathered, "legion.evaluation.stage.duration", "stage")
+	for _, want := range []string{"feature_fetch", "deterministic_agents", "sentinel"} {
+		if !stages[want] {
+			t.Errorf("stage %q was never timed; stages seen: %v", want, stages)
+		}
+	}
+
+	agents := attributeValues(t, gathered, "legion.agent.duration", "agent_id")
+	for _, want := range []string{"velocity", "device", "geo"} {
+		if !agents[want] {
+			t.Errorf("agent %q was never timed; agents seen: %v", want, agents)
+		}
+	}
+
+	if totals := attributeValues(t, gathered, "legion.evaluation.duration", "decision"); len(totals) != 1 {
+		t.Errorf("evaluation total was recorded %d times, want once per evaluation", len(totals))
+	}
+}
+
+func attributeValues(t *testing.T, gathered metricdata.ResourceMetrics, metric, key string) map[string]bool {
+	t.Helper()
+
+	found := map[string]bool{}
+	for _, scope := range gathered.ScopeMetrics {
+		for _, m := range scope.Metrics {
+			if m.Name != metric {
+				continue
+			}
+			histogram, ok := m.Data.(metricdata.Histogram[float64])
+			if !ok {
+				t.Fatalf("metric %q is %T, want a float64 histogram", metric, m.Data)
+			}
+			for _, point := range histogram.DataPoints {
+				value, _ := point.Attributes.Value(attribute.Key(key))
+				found[value.AsString()] = true
+			}
+		}
+	}
+	if len(found) == 0 {
+		t.Fatalf("metric %q was never recorded", metric)
+	}
+	return found
 }

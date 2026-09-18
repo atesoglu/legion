@@ -34,6 +34,7 @@ import (
 	"github.com/atesoglu/legion/gateway/internal/ratelimit"
 	"github.com/atesoglu/legion/gateway/internal/validation"
 	"github.com/atesoglu/legion/internal/platform/config"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	gatewayv1 "github.com/atesoglu/legion/protocol/gen/go/legion/gateway/v1"
 )
@@ -63,23 +64,44 @@ type server struct {
 	log           *slog.Logger
 }
 
+// decisionLatency is the number ADR-009's target is stated for: end to end,
+// measured at the gateway, as the caller experiences it. Everything the
+// orchestrator records is a component of this one.
+//
+// It is recorded for refusals too, attributed by outcome, because a fast
+// rejection and a fast decision are not the same thing and averaging them
+// together flatters the latter.
+var decisionLatency = observability.NewLatency(
+	"legion.decision.duration",
+	"End-to-end decision latency measured at the gateway, by outcome.",
+)
+
 // EvaluateTransaction applies the edge controls in the order that spends the
 // least on a request that will be refused: identify the caller, check its rate,
 // then validate the payload.
 func (s *server) EvaluateTransaction(
 	ctx context.Context,
 	request *gatewayv1.EvaluateTransactionRequest,
-) (*gatewayv1.EvaluateTransactionResponse, error) {
+) (response *gatewayv1.EvaluateTransactionResponse, err error) {
+	started := time.Now()
+	outcome := "error"
+	defer func() {
+		decisionLatency.Record(ctx, time.Since(started), observability.Outcome(outcome))
+	}()
+
 	caller, err := s.authenticator.Authenticate(ctx)
 	if err != nil {
+		outcome = "unauthenticated"
 		return nil, err
 	}
 
 	if !s.limiter.Allow(caller.ID) {
+		outcome = "rate_limited"
 		return nil, status.Error(codes.ResourceExhausted, "caller rate limit exceeded")
 	}
 
 	if err := validation.Request(request, time.Now()); err != nil {
+		outcome = "invalid"
 		return nil, err
 	}
 
@@ -88,9 +110,11 @@ func (s *server) EvaluateTransaction(
 
 	cached, found, err := s.dedup.Claim(ctx, caller.ID, idempotencyKey, transaction)
 	if err != nil {
+		outcome = "dedup_refused"
 		return nil, s.translateDedup(caller, err)
 	}
 	if found {
+		outcome = "replayed"
 		return cached, nil
 	}
 
@@ -100,8 +124,9 @@ func (s *server) EvaluateTransaction(
 		ctx, request.GetOptions().GetDeadline().AsDuration(), s.maxDeadline)
 	defer cancel()
 
-	response, err := s.orchestrator.EvaluateTransaction(forwardCtx, request)
+	response, err = s.orchestrator.EvaluateTransaction(forwardCtx, request)
 	if err != nil {
+		outcome = "failed"
 		// The claim must not outlive an evaluation that never happened, or a
 		// legitimate retry would wait out the full retention window for nothing.
 		if releaseErr := s.dedup.Release(context.WithoutCancel(ctx), caller.ID, idempotencyKey); releaseErr != nil {
@@ -109,6 +134,7 @@ func (s *server) EvaluateTransaction(
 		}
 		return nil, s.translate(caller, err)
 	}
+	outcome = response.GetOutcome().GetDecision().String()
 
 	if storeErr := s.dedup.Store(context.WithoutCancel(ctx), caller.ID, idempotencyKey, transaction, response); storeErr != nil {
 		s.log.Warn("dedup store failed", "caller", caller.ID, "error", storeErr.Error())

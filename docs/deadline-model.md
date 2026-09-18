@@ -140,12 +140,23 @@ Averages will not be reported alone. A mean latency figure hides exactly the
 behaviour an 80 ms P99 target is about.
 
 ADR-020 decides where these come from: histograms exported by OTLP to a
-collector and stored in Prometheus, per stage and end-to-end. None of it is
-built. The stage numbers have a second, older source —
+collector and stored in Prometheus, per stage and end-to-end. The histograms
+now exist — `legion.decision.duration` at the gateway, which is where the
+target is stated for, plus `legion.evaluation.duration`,
+`legion.evaluation.stage.duration` and `legion.agent.duration` in the
+orchestrator — with 0.08 seconds as an explicit bucket boundary, so "what
+fraction finished inside the budget" is a bucket count rather than an
+interpolation across one. **Nothing collects them**, so none of the figures
+above can be reported yet.
+
+The stage numbers also have a second, older source —
 `DecisionLineage.ExecutionSpan` has recorded the elapsed time and the budget
 granted for `feature_fetch`, `deterministic_agents` and `sentinel` on every
 decision since Phase 1, unsampled and durably. §7 is the first reading of it,
-and §8 is what that reading exposed about how it is stored.
+and §8 is what that reading exposed about how it is stored. The two are
+complementary rather than redundant: lineage answers "how long did decision X
+take", the histograms answer "what does the distribution look like", and
+neither answers the other's question without a scan.
 
 ## 7. Current status
 

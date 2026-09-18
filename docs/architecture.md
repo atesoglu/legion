@@ -405,11 +405,14 @@ to Prometheus, explored in Grafana; per-investigation cost to PostgreSQL — and
 the Go services now emit counters for the failures that were previously
 silent: lineage and case-trigger drops, dead-lettered investigation tasks,
 capability verdicts, idempotency claim outcomes and circuit-breaker
-transitions. **Nothing collects them.** There is no collector, no Prometheus,
-no Grafana and no alerting, so a counter that moves is still nobody's
-notification; export is off unless `LEGION_OTLP_ENDPOINT` is set, and no
-deployment sets it. There is no tracing at all, and Zone 3 emits nothing by
-design.
+transitions. They also emit latency histograms — end-to-end at the gateway,
+and per stage and per agent in the orchestrator — which is the first
+instrumented measurement of ADR-009's budget. **Nothing collects any of it.**
+There is no collector, no Prometheus, no Grafana and no alerting, so a counter
+that moves is still nobody's notification; export is off unless
+`LEGION_OTLP_ENDPOINT` is set, and no deployment sets it. There is no tracing,
+requests carry no correlation identifier beyond the decision id already in
+lineage, and Zone 3 emits nothing by design.
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made. One measurement now

@@ -24,6 +24,7 @@ import (
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/budget"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/features"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/registry"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	commonv1 "github.com/atesoglu/legion/protocol/gen/go/legion/common/v1"
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
@@ -159,6 +160,30 @@ func New(options Options) (*Coordinator, error) {
 	}, nil
 }
 
+// stageLatency and evaluationLatency are the same measurements lineage
+// already records per decision (ExecutionSpan), aggregated. Lineage answers
+// "how long did decision X take"; these answer "what does the distribution
+// look like", which is what docs/deadline-model.md section 6 asks for and
+// what no per-decision record can give without a scan.
+//
+// agent_id is a permitted attribute here and nowhere in Zone 6: the
+// decision-path agent set is small and fixed by configuration (ADR-014),
+// where investigation agents are expected in the thousands.
+var (
+	stageLatency = observability.NewLatency(
+		"legion.evaluation.stage.duration",
+		"Time spent in each stage of an evaluation, by stage.",
+	)
+	evaluationLatency = observability.NewLatency(
+		"legion.evaluation.duration",
+		"Total orchestrator time for one evaluation, excluding the gateway's own work.",
+	)
+	agentLatency = observability.NewLatency(
+		"legion.agent.duration",
+		"Time an agent took to answer, by agent and by whether it produced a signal.",
+	)
+)
+
 // Request is one evaluation's per-request switches, translated from the
 // wire's EvaluationOptions so this package stays transport-free.
 //
@@ -227,6 +252,12 @@ func (c *Coordinator) Evaluate(
 		return nil, nil, status.Error(codes.Internal, "evaluation: sentinel returned no outcome")
 	}
 
+	totalElapsed := time.Since(started)
+	stageLatency.Record(ctx, featureElapsed, observability.Stage("feature_fetch"))
+	stageLatency.Record(ctx, agentsElapsed, observability.Stage("deterministic_agents"))
+	stageLatency.Record(ctx, sentinelElapsed, observability.Stage("sentinel"))
+	evaluationLatency.Record(ctx, totalElapsed, observability.Decision(outcome.GetDecision().String()))
+
 	entry := c.buildLineage(lineageInput{
 		decisionID:     evaluationID,
 		subject:        subject,
@@ -237,7 +268,7 @@ func (c *Coordinator) Evaluate(
 		featureFailure: featureFailure,
 		shadow:         req.Shadow,
 		deadline:       deadline,
-		totalElapsed:   time.Since(started),
+		totalElapsed:   totalElapsed,
 		spans: []*riskv1.ExecutionSpan{
 			span("feature_fetch", featureElapsed, featureWindow),
 			span("deterministic_agents", agentsElapsed, agentWindow),
@@ -417,7 +448,18 @@ func (c *Coordinator) gather(
 		wg.Add(1)
 		go func(index int, agent registry.Agent) {
 			defer wg.Done()
-			results[index] = c.invoke(fanCtx, agent, evaluationID, subject, supplied, window)
+			evaluation := c.invoke(fanCtx, agent, evaluationID, subject, supplied, window)
+			results[index] = evaluation
+
+			// Recorded here rather than inside invoke so that every way an
+			// agent call can end -- signal, failure, open circuit, exhausted
+			// budget -- is measured by one statement.
+			outcome := "signal"
+			if evaluation.GetSignal() == nil {
+				outcome = "failure"
+			}
+			agentLatency.Record(ctx, evaluation.GetObservedLatency().AsDuration(),
+				observability.AgentID(agent.ID), observability.Outcome(outcome))
 		}(i, agent)
 	}
 	wg.Wait()
