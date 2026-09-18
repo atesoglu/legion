@@ -1,6 +1,8 @@
 # Failure model
 
-Status: Phase 1. The degraded paths are implemented — an agent that fails is
+Status: Phase 1 (real-time decision path) / Phase 2 (investigation plane,
+partially built — see §3's "Investigation plane (Zone 6)" below). The
+degraded paths on the decision path are implemented — an agent that fails is
 excluded and the remaining weights renormalised, a store that cannot answer
 leaves every feature explicitly unavailable, and an exhausted budget skips
 stages rather than starving the decision. Systematic failure injection, which is
@@ -113,20 +115,22 @@ Two failure modes are unacceptable and are treated as defects:
 | Response | Reject with `INVALID_ARGUMENT`. No evaluation is started, no lineage beyond the rejection is emitted, no resources are consumed downstream. |
 | Reason code | None — this is not a risk outcome. |
 
-### Investigation plane (Zone 6) — specified, not yet built
+### Investigation plane (Zone 6) — partially built
 
-None of Zone 6 exists (ADR-017), so none of the following is implemented. It
-is recorded here, rather than only in `project-plan.md`, so that Phase 6 has
-a target to test against rather than a blank page when the plane exists:
+Zone 6 (ADR-017) is partially built: the controller, generic worker, task
+queue and Postgres schema all run, proven end to end by `test/e2e`. The
+table below records each documented failure mode's actual status, not just
+its intent — some are real, tested behaviour; one is a known, currently
+incorrect gap found during a documentation review, not fixed yet:
 
-| Failure | Response |
-|---|---|
-| Worker crash mid-task | Lease expires; task is claimable by another worker; `attempt` increments (`investigation-model.md` §4). |
-| Task queue redelivery of a completed task | The task handler is idempotent; a duplicate delivery must not duplicate evidence, findings, or a case. |
-| Investigation Redis instance unavailable or slow | New tasks cannot be dispatched; already-`RUNNING` tasks continue independently since Postgres, not Redis, holds their state. Case/investigation status remains queryable throughout. |
-| Database unavailable during case/evidence/finding write | Do not acknowledge the queue message; the task remains claimable once the database recovers. |
-| Inference timeout or malformed response inside an investigation | Same posture as the real-time path's `MODEL_TIMEOUT`/`MODEL_OUTPUT_INVALID` (above), scoped to one task rather than one decision: the task fails or retries: the case is not blocked, since other tasks in the same investigation are independent. |
-| Malformed or duplicate task message | Rejected by the worker without executing any tool or model call; recorded as an `InvestigationAuditEvent`. |
+| Failure | Response | Status |
+|---|---|---|
+| Worker crash mid-task | Lease expires; task is claimable by another worker via `XAUTOCLAIM`; `attempt` increments (`investigation-model.md` §4). | **Implemented**, unit-tested (`investigation/internal/queue`). |
+| Task queue redelivery of a completed task | The task handler is idempotent; a duplicate delivery must not duplicate evidence, findings, or a case. | **Implemented**: `investigation/worker` checks `store.IsTerminal` before doing any work and no-ops on a task already finished. |
+| Investigation Redis instance unavailable or slow | New tasks cannot be dispatched; already-`RUNNING` tasks continue independently since Postgres, not Redis, holds their state. Case/investigation status remains queryable throughout. | **Plausible, not exercised.** No failure-injection test forces this; the reasoning follows from the code but is unverified. |
+| Database unavailable during case/evidence/finding write | Do not acknowledge the queue message; the task remains claimable once the database recovers. | **Not implemented — currently incorrect.** `investigation/worker`'s `runLoop` acknowledges every message unconditionally after `handleTask` returns, regardless of whether the work inside it succeeded. A Postgres outage during a claim or write is logged and the task is left in whatever state it reached, but the message is still acked, so it is never redelivered: the task is silently dropped, not retried. Found during a documentation accuracy pass (2026-09-18); not yet fixed. |
+| Inference timeout or malformed response inside an investigation | Same posture as the real-time path's `MODEL_TIMEOUT`/`MODEL_OUTPUT_INVALID` (above), scoped to one task rather than one decision: the task fails or retries: the case is not blocked, since other tasks in the same investigation are independent. | **Not applicable yet.** No investigation agent calls a real model; this failure mode has nothing to happen to. |
+| Malformed or duplicate task message | Rejected by the worker without executing any tool or model call; recorded as an `InvestigationAuditEvent`. | **Partially implemented.** A malformed envelope is dropped (logged, not audited as an `InvestigationAuditEvent` — no such event type is written for this case). A duplicate delivery is handled, per the row above. |
 
 Crucially, **none of the above can affect a `DecisionOutcome`.** Zone 6 fails
 after the decision that created the case in question has already been made

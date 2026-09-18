@@ -1411,6 +1411,16 @@ Target:
 operate without direct access to infrastructure resources, and a `REVIEW`
 decision produces a real, auditable case.**
 
+**Status: Complete**, with gaps carried into later phases rather than hidden:
+transaction idempotency (ADR-019), the capability runtime (ADR-005, one real
+caller — `investigation/worker` — the fixed-`Capability`-enum path has none
+yet), and the investigation plane (ADR-017: controller, generic worker, task
+queue, two seeded mocked agents) all ship. Not done: a `RegisterAgent` API
+(the manifest/registry are static Go configuration and Postgres seeding, not
+a registration flow), mTLS-asserted `workload_id`, durable capability audit
+storage, and any investigation agent's tool/model call being real rather
+than mocked (Phase 3's shared inference runtime is what that needs).
+
 ---
 
 ## Phase 3 — Behavioral SLM Agent & Shared Inference

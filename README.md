@@ -10,12 +10,13 @@ claims.
 
 ---
 
-## Status: Phase 1 — Deterministic Decision Path
+## Status: Phase 2 — Investigation Plane and Capability Runtime
 
 A transaction presented at the gateway returns a decision, with reason codes and
 a per-agent contribution breakdown, and **no AI in the path**. The chain is
 exercised end to end by a suite that starts the real binaries and speaks gRPC to
-them.
+them. A `REVIEW` decision now also opens a case and runs it through a mocked
+investigation, capability-checked at every tool call.
 
 | | |
 |---|---|
@@ -132,11 +133,12 @@ cross-component import of private code a compile error ([ADR-015](docs/adr/ADR-0
 
 Directories for later phases are absent until they contain something. An empty
 directory that promises work is worse than no directory. `investigation/` runs
-end to end (case, investigation, task, mocked finding), with one seeded agent
-and no capability runtime or real model behind it yet — see
-[README status table](#status-phase-1--deterministic-decision-path) and
-[architecture.md](docs/architecture.md) §9 for exactly what that does and does
-not mean. `agents/` (Zone 4) remains absent: nothing exists there yet.
+end to end (case, investigation, task, mocked finding) for two seeded agents,
+each tool call checked by a real capability runtime (`control-plane/
+capability`) — but with no real tool or model behind either agent yet. See
+the status table above and [architecture.md](docs/architecture.md) §9 for
+exactly what that does and does not mean. `agents/` (Zone 4) remains absent:
+nothing exists there yet.
 
 ## Building
 

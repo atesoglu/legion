@@ -1,13 +1,17 @@
 # Threat model
 
-Status: Phase 1. Threats and intended mitigations are documented here.
+Status: Phase 2. Threats and intended mitigations are documented here.
 Mitigations marked *planned* are not implemented. A mitigation without a test
 is an assumption, and Phase 6 exists to convert them into evidence.
 
-What is enforced today is confined to the edge: callers are authenticated,
-every field is validated, unbounded strings and un-pseudonymised identifiers are
-rejected, and each caller is rate limited. Network isolation, workload identity
-and capability brokering are not implemented.
+What is enforced today: at the edge, callers are authenticated, every field
+is validated, unbounded strings and un-pseudonymised identifiers are
+rejected, each caller is rate limited, and a resubmission is deduplicated
+(ADR-019). The capability runtime (ADR-005) exists and is enforced for
+investigation-plane tool calls (`investigation/worker`), with real limits —
+see T-14. Network isolation, workload identity (mTLS), and capability
+enforcement on the real-time deterministic/behavioural path are not
+implemented.
 
 ## Scope
 

@@ -1,11 +1,15 @@
 # Security boundaries
 
-Status: Phase 1. The Zone 0 boundary is enforced: callers authenticate, every
+Status: Phase 2. The Zone 0 boundary is enforced: callers authenticate, every
 field is validated, and an identifier that is not a pseudonym is rejected before
 it enters the platform. Everything between zones is still open — services speak
-plaintext gRPC and hold no workload identity. Capability enforcement is Phase 2
-(restructured, ADR-017); network, identity and workload hardening are Phase 4.
-Zone 6 (investigation, ADR-017) is documented intent only — nothing in it runs.
+plaintext gRPC and hold no workload identity. Capability enforcement (ADR-005)
+is partially built: `control-plane/capability` runs and is enforced for Zone 6's
+tool calls, but nothing on the real-time deterministic/behavioural path calls
+it yet. Network, identity and workload hardening are Phase 4. Zone 6
+(investigation, ADR-017) is partially built: the controller, generic worker,
+task queue and Postgres schema all run; the tool/model calls it makes are
+still mocked.
 
 ## 1. Trust zones
 
@@ -41,7 +45,7 @@ Zone 6 (investigation, ADR-017) is documented intent only — nothing in it runs
 └───────────────────────────────┬─────────────────────────────────┘
                                 │  async only; never a Zone 2 dependency
 ┌───────────────────────────────▼─────────────────────────────────┐
-│ Zone 6 — Investigation (ADR-017, not built)                     │
+│ Zone 6 — Investigation (ADR-017, partially built)               │
 │ Case/investigation controller, generic workers, task queue.     │
 │ Same capability boundary as Zone 4. Off the 80 ms budget.       │
 └─────────────────────────────────────────────────────────────────┘

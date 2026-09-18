@@ -105,8 +105,9 @@ already does it for free and cannot be skipped.
   code and becomes a place code is promoted into.
 - Test helpers follow the same rule. A helper used by two components is shared
   code and moves; a helper used by one stays private.
-- The layout generalises to the services not yet built: the capability runtime
-  and the behavioural agent each get their own `internal` from the first commit.
+- The layout generalises to services built after this ADR: `control-plane/
+  capability` got its own `internal` from its first commit, and the
+  behavioural agent will too, once it exists.
 
 ## Revisit if
 

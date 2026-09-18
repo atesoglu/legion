@@ -1,7 +1,8 @@
 # Architecture
 
-Status: Phase 1. The deterministic decision path described here is implemented
-and exercised end to end. Where behaviour does not exist yet, it says so; §9
+Status: Phase 2. The deterministic decision path described here is implemented
+and exercised end to end, and Phase 2's capability runtime and investigation
+plane (partially) are too. Where behaviour does not exist yet, it says so; §9
 lists what remains.
 
 ## 1. What Legion is
@@ -199,10 +200,10 @@ services.
 |---|---|
 | `legion.common.v1` | `Money`, `PseudonymousId`, `Version`, `Failure` |
 | `legion.risk.v1` | `Transaction` and its parts, `Feature`, `RiskSignal`, `AgentEvaluation`, `Decision`, `DecisionOutcome`, `ReasonCode`, `DecisionLineage` |
-| `legion.agent.v1` | `Capability`, `AgentManifest`, `CapabilityAudit`, `AgentService`, `CapabilityService` |
+| `legion.agent.v1` | `Capability`, `AgentManifest`, `CapabilityAudit`, `AgentService`, `CapabilityService`, `CapabilityRuntimeService` (see note below) |
 | `legion.dataplane.v1` | `SentinelService` |
 | `legion.gateway.v1` | `DecisionService` |
-| `legion.investigation.v1` | `Case`, `Investigation`, `Task`, `Evidence`, `AgentFinding`, `ToolExecution`, `AgentDefinition` (ADR-017, planned) |
+| `legion.investigation.v1` | `Case`, `Investigation`, `Task`, `Evidence`, `AgentFinding`, `ToolExecution`, `AgentDefinition`, `CaseTrigger` (ADR-017, partially built — no gRPC service, only message types used over Postgres/Redis) |
 
 Structured JSON with a JSON Schema is used in exactly one place: the interface
 between the behavioural agent and the language model. That is a *model output
@@ -212,6 +213,28 @@ enters the deterministic pipeline.
 The gateway and the orchestrator both implement `DecisionService`. The gateway
 is a policy-enforcing front for the same operation, so giving it a second,
 near-identical contract would only create something to drift.
+
+**`legion.agent.v1` carries two capability-shaped service contracts, and that
+is a discovered inconsistency, not a design.** `capability_service.proto`
+(Phase 0) specifies `CapabilityService`, one RPC per verb
+(`GetTransaction`, `GetAccountFeatures`, `GetVelocityFeatures`,
+`GetDeviceFeatures`, `GetGeoFeatures`, `SubmitEvaluation`) — this is what
+`capability-model.md` §3's capability list actually describes, and it has
+never been implemented; nothing generates or registers a
+`CapabilityServiceServer` anywhere in the repository. Separately,
+`capability.proto`'s `CapabilityRuntimeService` (`CheckCapability`,
+`CheckToolCapability`) is what `control-plane/capability` actually
+implements. It was added without noticing `CapabilityService` already
+existed for the same real-time-agent use case; `CheckToolCapability`'s
+tool-grant path is genuinely new (investigation tools have no equivalent in
+`CapabilityService`), but `CheckCapability`'s fixed-enum path duplicates
+work `CapabilityService` already specified more concretely, and only one of
+the two has ever had a real caller pushing on it (neither, for
+`CheckCapability`). Nothing consumes `CapabilityService` today, so nothing
+is broken, but the two should not both survive into Phase 3: when the
+behavioural agent needs real capability-scoped calls, implement
+`CapabilityService` (the original, more specific contract) against
+`internal/broker`'s existing enforcement pipeline, not `CheckCapability`.
 
 ## 7. Cross-cutting models
 
@@ -237,7 +260,8 @@ zones, because a library belongs to no trust boundary.
 legion/
 ├── gateway/              Zone 1 · Go · edge service
 ├── control-plane/        Zone 2 · Go
-│   └── orchestrator/
+│   ├── orchestrator/
+│   └── capability/       capability broker (ADR-005): identity, grant, scope, constraint, budget
 ├── data-plane/           Zone 3 · Rust · four processes
 │   ├── sentinel/         aggregation, policy, decision authority
 │   └── engines/

@@ -4,12 +4,12 @@ Status: partially built. The case → investigation → task → mocked-agent �
 evidence/finding loop described below exists in code
 (`investigation/controller`, `investigation/worker`,
 `investigation/internal/{store,queue}`), with two seeded agents
-(`device_investigation_agent`, `velocity_investigation_agent`) and no real
-tool or model call behind either — see §7 and §10 for what that does and
-does not mean. Everything else this document describes (the capability
-runtime actually gating a tool call, the `RegisterAgent` API, a relationship
-rule/agent, observability and cost) remains documented intent only, the
-same discipline `decision-model.md` held Zone 2/3 to in Phase 0.
+(`device_investigation_agent`, `velocity_investigation_agent`), each tool
+call checked by a real capability runtime (ADR-005,
+`control-plane/capability`) before it runs — but no real tool or model
+behind either agent, see §7 and §10 for exactly what that does and does not
+mean. Still documented intent only: the `RegisterAgent` API, a relationship
+rule/agent, observability and cost.
 
 ## 1. Where this fits
 
@@ -22,7 +22,7 @@ Risk Subject → Evidence → Signals → Decision   (decision-model.md, built)
                                         │
                                         ▼  REVIEW only, async, off-budget
                               Case → Investigation → Findings → Result
-                                        (this document, not built)
+                                        (this document, partially built)
 ```
 
 The two halves are deliberately separate systems joined by one identifier:

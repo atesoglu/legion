@@ -4,10 +4,7 @@ Status: partially built. `control-plane/capability` runs the enforcement
 pipeline this document describes (identity, grant, scope, constraint,
 budget, in that order, every call audited) and it has one real caller
 today: `investigation/worker` calls `CheckToolCapability` before every
-mocked tool execution. What is still only documented intent: the
-`CheckCapability` (fixed-enum) path has no caller yet, because neither the
-deterministic real-time agents (served push-style, so they never call out)
-nor the behavioural agent (Phase 3, not built) exercise it; a
+mocked tool execution. What is still only documented intent: a
 `RegisterAgent`/manifest API (the manifest is a static Go default,
 `control-plane/capability/internal/broker/manifest.go`); mTLS/workload
 identity (`workload_id` is asserted by the caller today, a Phase 1 stand-in,
@@ -15,6 +12,22 @@ same posture the rest of the platform takes pending ADR-011); and durable
 audit storage (every check is logged, nothing persists it — Phase 4 scope).
 This model governs Zone 6 investigation agents (ADR-017) as well as the
 behavioural agent — there is one enforcement mechanism, not one per zone.
+
+**Contract inconsistency, discovered rather than designed.** §3 below
+describes exactly one RPC per capability
+(`GetTransaction`/`GetVelocityFeatures`/etc.), which is
+`capability_service.proto`'s `CapabilityService` — specified since Phase 0,
+never implemented. The capability runtime that got built instead exposes a
+generic `CheckCapability` RPC (`capability.proto`'s
+`CapabilityRuntimeService`), added without noticing `CapabilityService`
+already existed for this exact purpose. `CheckToolCapability` (the same
+service) is not a duplicate — investigation's tool grants have no
+equivalent in `CapabilityService` — but `CheckCapability`'s fixed-enum path
+is genuinely redundant with a more specific, already-specified contract, and
+neither has a real caller yet. See `architecture.md` §6 for the fuller
+account and the recommendation: implement `CapabilityService` against
+`internal/broker`'s existing pipeline when the behavioural agent needs it,
+rather than carrying both.
 
 ## 1. Problem
 
