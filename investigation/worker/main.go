@@ -134,10 +134,54 @@ func consumerName() string {
 	return host + "-" + strconv.Itoa(os.Getpid())
 }
 
+// taskQueue and taskStore are the worker's view of its two dependencies,
+// narrow enough to fake in tests that exercise delivery semantics without a
+// live Redis or Postgres. *queue.Stream and *store.Store satisfy them.
+type taskQueue interface {
+	Read(ctx context.Context, consumer string, count int64, block time.Duration) ([]queue.Message, error)
+	Reclaim(ctx context.Context, consumer string, minIdle time.Duration, count int64) ([]queue.Message, error)
+	Ack(ctx context.Context, id string) error
+}
+
+type taskStore interface {
+	GetTask(ctx context.Context, taskID string) (*store.Task, error)
+	ClaimTask(ctx context.Context, taskID string) (uint32, error)
+	CompleteTask(ctx context.Context, taskID string) error
+	FailTask(ctx context.Context, taskID string, deadLetter bool) error
+	GetEnabledAgent(ctx context.Context, agentID string) (*store.AgentDefinition, error)
+	CompleteInvestigationIfDone(ctx context.Context, investigationID string) (bool, string, error)
+	InsertAuditEvent(ctx context.Context, caseID, eventType string, detail map[string]any) error
+	InsertToolExecution(
+		ctx context.Context, taskID, toolName string, arguments, result map[string]any,
+		status string, duration time.Duration,
+	) (string, error)
+	InsertEvidence(ctx context.Context, investigationID, source string, content map[string]any) (string, error)
+	InsertFinding(
+		ctx context.Context, taskID, agentID string, evidenceIDs []string,
+		observation, hypothesis string, confidence uint32,
+	) (string, error)
+}
+
+// disposition is what one delivery concluded about its message, and so
+// whether the message may be acknowledged.
+type disposition int
+
+const (
+	// settled: this delivery reached a conclusion that is now durable in
+	// Postgres (or never could be). Acknowledging drops it for good.
+	settled disposition = iota
+
+	// retry: the work did not conclude and nothing durable records that,
+	// so the message must stay in the group's pending list until the lease
+	// expires and Reclaim hands it back (ADR-017 §3's at-least-once
+	// contract). Acknowledging here would silently drop the task.
+	retry
+)
+
 // runLoop consumes new tasks, and reclaims tasks abandoned by a crashed
 // worker, until stop is closed.
 func runLoop(
-	stop <-chan struct{}, consumer string, tasks *queue.Stream, st *store.Store,
+	stop <-chan struct{}, consumer string, tasks taskQueue, st taskStore,
 	capability agentv1.CapabilityRuntimeServiceClient, log *slog.Logger,
 ) {
 	ctx := context.Background()
@@ -163,7 +207,10 @@ func runLoop(
 		}
 
 		for _, message := range messages {
-			handleTask(ctx, st, capability, message.Payload, log)
+			if handleTask(ctx, st, capability, message.Payload, log) == retry {
+				log.Warn("task left unacknowledged for redelivery", "message_id", message.ID)
+				continue
+			}
 			if err := tasks.Ack(ctx, message.ID); err != nil {
 				log.Warn("task ack failed", "id", message.ID, "error", err)
 			}
@@ -171,52 +218,53 @@ func runLoop(
 	}
 }
 
-// handleTask runs one task to completion, or fails it. It is safe to call
-// more than once for the same task_id (at-least-once delivery, ADR-017
-// section 3): a task already in a terminal state is a no-op.
+// handleTask runs one task to completion, or fails it, and reports whether
+// the message may be acknowledged. It is safe to call more than once for the
+// same task_id (at-least-once delivery, ADR-017 section 3): a task already in
+// a terminal state runs no agent a second time.
 func handleTask(
-	ctx context.Context, st *store.Store, capability agentv1.CapabilityRuntimeServiceClient, payload []byte, log *slog.Logger,
-) {
+	ctx context.Context, st taskStore, capability agentv1.CapabilityRuntimeServiceClient, payload []byte, log *slog.Logger,
+) disposition {
 	envelope := &investigationv1.Task{}
 	if err := proto.Unmarshal(payload, envelope); err != nil {
+		// Redelivery cannot turn an unparseable payload into a parseable one.
 		log.Warn("task envelope is corrupt; dropping", "error", err)
-		return
+		return settled
 	}
 
 	task, err := st.GetTask(ctx, envelope.GetTaskId())
 	if err != nil {
 		log.Warn("task lookup failed", "task_id", envelope.GetTaskId(), "error", err)
-		return
+		return retry
 	}
 	if task == nil {
 		log.Warn("task envelope refers to no known task", "task_id", envelope.GetTaskId())
-		return
+		return settled
 	}
 	if store.IsTerminal(task.Status) {
-		// Already handled by a previous delivery of this same message.
-		return
+		// The agent already ran under a previous delivery, but that delivery
+		// may have died before closing the investigation out, so the
+		// completion check is still owed.
+		return finishInvestigation(ctx, st, task, log)
 	}
 	if task.Attempt >= task.MaxAttempts {
-		failTask(ctx, st, task, true, log)
-		return
+		return failTask(ctx, st, task, true, log)
 	}
 
 	if _, err := st.ClaimTask(ctx, task.TaskID); err != nil {
 		log.Warn("task claim failed", "task_id", task.TaskID, "error", err)
-		return
+		return retry
 	}
 
 	agent, err := st.GetEnabledAgent(ctx, task.AgentID)
 	if err != nil {
 		log.Warn("agent lookup failed", "task_id", task.TaskID, "agent_id", task.AgentID, "error", err)
-		failTask(ctx, st, task, task.Attempt+1 >= task.MaxAttempts, log)
-		return
+		return failTask(ctx, st, task, task.Attempt+1 >= task.MaxAttempts, log)
 	}
 	if agent == nil {
 		log.Warn("task references an agent that is not registered or not enabled",
 			"task_id", task.TaskID, "agent_id", task.AgentID)
-		failTask(ctx, st, task, true, log)
-		return
+		return failTask(ctx, st, task, true, log)
 	}
 
 	if err := runAgent(ctx, st, capability, task, agent, log); err != nil {
@@ -225,32 +273,51 @@ func handleTask(
 		// retrying would ask the same broker the same question and get the
 		// same answer, so it goes straight to DEAD_LETTER rather than
 		// waiting out max_attempts.
-		failTask(ctx, st, task, errors.Is(err, errCapabilityDenied) || task.Attempt+1 >= task.MaxAttempts, log)
-		return
+		return failTask(ctx, st, task, errors.Is(err, errCapabilityDenied) || task.Attempt+1 >= task.MaxAttempts, log)
 	}
 
 	if err := st.CompleteTask(ctx, task.TaskID); err != nil {
+		// The agent's work is persisted but the task is still RUNNING.
+		// Acknowledging now would strand it there forever, so redeliver and
+		// accept that the mocked agent may run twice — at-least-once is the
+		// contract, and task.max_attempts bounds it.
 		log.Warn("task completion failed", "task_id", task.TaskID, "error", err)
-		return
+		return retry
 	}
 
+	return finishInvestigation(ctx, st, task, log)
+}
+
+// finishInvestigation closes out the investigation and case if this task was
+// the last one outstanding. It runs after a task reaches ANY terminal state,
+// failures included: an investigation whose final task failed is just as
+// finished as one whose final task succeeded.
+func finishInvestigation(ctx context.Context, st taskStore, task *store.Task, log *slog.Logger) disposition {
 	completed, caseID, err := st.CompleteInvestigationIfDone(ctx, task.InvestigationID)
 	if err != nil {
 		log.Warn("investigation completion check failed", "investigation_id", task.InvestigationID, "error", err)
-		return
+		return retry
 	}
 	if completed {
+		// Log-only: the investigation has already transitioned, so a
+		// redelivery would report completed == false and never retry this
+		// write. A lost audit event is preferable to replaying the task.
 		if err := st.InsertAuditEvent(ctx, caseID, "INVESTIGATION_COMPLETED",
 			map[string]any{"investigation_id": task.InvestigationID}); err != nil {
 			log.Warn("audit event insert failed", "case_id", caseID, "error", err)
 		}
 	}
+	return settled
 }
 
-func failTask(ctx context.Context, st *store.Store, task *store.Task, deadLetter bool, log *slog.Logger) {
+func failTask(ctx context.Context, st taskStore, task *store.Task, deadLetter bool, log *slog.Logger) disposition {
 	if err := st.FailTask(ctx, task.TaskID, deadLetter); err != nil {
+		// Nothing durable records the failure, so the task would be left
+		// mid-flight if this message were acknowledged.
 		log.Warn("marking task failed did not succeed", "task_id", task.TaskID, "error", err)
+		return retry
 	}
+	return finishInvestigation(ctx, st, task, log)
 }
 
 // errCapabilityDenied marks a runAgent failure caused by the capability
@@ -266,7 +333,7 @@ var errCapabilityDenied = errors.New("investigation-worker: capability denied")
 // inference runtime (Phase 3) to call yet, only a real capability check in
 // front of a fake tool.
 func runAgent(
-	ctx context.Context, st *store.Store, capability agentv1.CapabilityRuntimeServiceClient,
+	ctx context.Context, st taskStore, capability agentv1.CapabilityRuntimeServiceClient,
 	task *store.Task, agent *store.AgentDefinition, log *slog.Logger,
 ) error {
 	started := time.Now()

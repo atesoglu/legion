@@ -398,6 +398,11 @@ func (s *Store) OpenTaskCount(ctx context.Context, investigationID string) (int,
 // once every task belonging to it has reached a terminal state. It is safe
 // to call after every task completion; it is a no-op (completed == false)
 // until the last one finishes.
+//
+// completed reports the TRANSITION, not the state: a second call for an
+// investigation already marked COMPLETED returns false. The worker keys its
+// INVESTIGATION_COMPLETED audit event off that, so a redelivered task
+// (at-least-once, ADR-017 §3) cannot append a duplicate audit record.
 func (s *Store) CompleteInvestigationIfDone(ctx context.Context, investigationID string) (completed bool, caseID string, err error) {
 	openTasks, err := s.OpenTaskCount(ctx, investigationID)
 	if err != nil {
@@ -415,19 +420,22 @@ func (s *Store) CompleteInvestigationIfDone(ctx context.Context, investigationID
 		return false, "", fmt.Errorf("store: look up case for investigation %q: %w", investigationID, err)
 	}
 
-	_, err = s.pool.Exec(ctx, `
-		UPDATE investigations SET status = $1, completed_at = now() WHERE investigation_id = $2`,
-		InvestigationCompleted, investigationID)
-	if err != nil {
-		return false, "", fmt.Errorf("store: complete investigation %q: %w", investigationID, err)
-	}
-
+	// The case is updated first so that a failure between the two writes
+	// leaves the investigation un-transitioned, and therefore retryable.
 	_, err = s.pool.Exec(ctx, `UPDATE cases SET status = $1, updated_at = now() WHERE case_id = $2`,
 		CaseCompleted, caseID)
 	if err != nil {
 		return false, "", fmt.Errorf("store: complete case %q: %w", caseID, err)
 	}
-	return true, caseID, nil
+
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE investigations SET status = $1, completed_at = now()
+		WHERE investigation_id = $2 AND status <> $1`,
+		InvestigationCompleted, investigationID)
+	if err != nil {
+		return false, "", fmt.Errorf("store: complete investigation %q: %w", investigationID, err)
+	}
+	return tag.RowsAffected() > 0, caseID, nil
 }
 
 // InsertToolExecution records one tool call a worker made on an agent's

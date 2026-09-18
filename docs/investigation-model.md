@@ -113,6 +113,21 @@ Postgres, not the queue, is the source of truth for this state machine. A
 worker writes `RUNNING` before doing any work, so a crash mid-task is visible
 and recoverable, never silently lost.
 
+The queue message is acknowledged only once the task's outcome is durable in
+Postgres. A delivery that could not conclude — a database outage during the
+claim, the agent's writes, or the completion — leaves the message pending so
+the lease recovers it. The cost of that choice is that a redelivery re-runs
+the agent's work, which at-least-once delivery implies anyway and
+`max_attempts` bounds.
+
+**The diagram above is the intended state machine, not yet the implemented
+one.** The implementation has no `WAITING` or `RETRYING` task state, and it
+treats `FAILED` as terminal rather than as a step on the way to a retry, so
+the `max_attempts` path to `DEAD_LETTER` is currently unreachable: the first
+failure ends the task. Retry today comes only from lease recovery of an
+unacknowledged message, not from a failed task being re-queued. Reconciling
+the two is open work.
+
 ### Worker
 
 ```text
@@ -250,3 +265,7 @@ Phase 2/3 acceptance test, the investigation-plane analogue of
   proto comment), not `(caller, idempotency_key)` as the gateway's own dedup
   is; two different callers reusing the same key would collide into one
   case. This is a known, accepted gap, not an oversight discovered later.
+- It does not claim the task state machine in §4 is implemented as drawn.
+  `WAITING` and `RETRYING` do not exist in code, and a failed task is
+  terminal, so an investigation always closes out — but it closes out with a
+  failed task rather than a retried one.
