@@ -6,6 +6,9 @@ import (
 )
 
 // decisionRow is one row of the decisions table.
+// Durations are nanoseconds throughout, which is what the DecisionLineage
+// Duration fields carry. Milliseconds rounded almost every stage of an 80 ms
+// budget to zero -- see docs/deadline-model.md section 8 and migration 0002.
 type decisionRow struct {
 	ID               string
 	TransactionID    string
@@ -17,8 +20,8 @@ type decisionRow struct {
 	PolicyVersion    string
 	PolicyFallback   bool
 	Shadow           bool
-	DeadlineMs       int64
-	TotalElapsedMs   int64
+	DeadlineNs       int64
+	TotalElapsedNs   int64
 	RawLineage       []byte
 }
 
@@ -39,20 +42,20 @@ type agentEvaluationRow struct {
 	FailureComponent     string
 	FailureMessage       string
 	FailureRetryable     bool
-	ObservedLatencyMs    int64
+	ObservedLatencyNs    int64
 }
 
 type executionSpanRow struct {
 	Stage     string
-	ElapsedMs int64
-	BudgetMs  int64
+	ElapsedNs int64
+	BudgetNs  int64
 }
 
 type decisionFailureRow struct {
 	Kind      string
 	Component string
 	Message   string
-	ElapsedMs int64
+	ElapsedNs int64
 	Retryable bool
 }
 
@@ -93,8 +96,8 @@ func buildRows(entry *riskv1.DecisionLineage, rawLineage []byte) rows {
 	for _, span := range entry.GetSpans() {
 		spans = append(spans, executionSpanRow{
 			Stage:     span.GetStage(),
-			ElapsedMs: span.GetElapsed().AsDuration().Milliseconds(),
-			BudgetMs:  span.GetBudget().AsDuration().Milliseconds(),
+			ElapsedNs: span.GetElapsed().AsDuration().Nanoseconds(),
+			BudgetNs:  span.GetBudget().AsDuration().Nanoseconds(),
 		})
 	}
 
@@ -104,7 +107,7 @@ func buildRows(entry *riskv1.DecisionLineage, rawLineage []byte) rows {
 			Kind:      failure.GetKind().String(),
 			Component: failure.GetComponent(),
 			Message:   failure.GetMessage(),
-			ElapsedMs: failure.GetElapsed().AsDuration().Milliseconds(),
+			ElapsedNs: failure.GetElapsed().AsDuration().Nanoseconds(),
 			Retryable: failure.GetRetryable(),
 		})
 	}
@@ -121,8 +124,8 @@ func buildRows(entry *riskv1.DecisionLineage, rawLineage []byte) rows {
 			PolicyVersion:    outcome.GetPolicy().GetVersion().GetVersion(),
 			PolicyFallback:   outcome.GetPolicy().GetFallback(),
 			Shadow:           entry.GetShadow(),
-			DeadlineMs:       entry.GetDeadline().AsDuration().Milliseconds(),
-			TotalElapsedMs:   entry.GetTotalElapsed().AsDuration().Milliseconds(),
+			DeadlineNs:       entry.GetDeadline().AsDuration().Nanoseconds(),
+			TotalElapsedNs:   entry.GetTotalElapsed().AsDuration().Nanoseconds(),
 			RawLineage:       rawLineage,
 		},
 		agentEvaluations: evaluations,
@@ -139,7 +142,7 @@ func buildAgentEvaluationRow(evaluation *riskv1.AgentEvaluation, contribution *r
 		WeightedContribution: int32(contribution.GetWeightedContribution()),
 		Included:             contribution.GetIncluded(),
 		ExclusionReason:      contribution.GetExclusionReason().String(),
-		ObservedLatencyMs:    evaluation.GetObservedLatency().AsDuration().Milliseconds(),
+		ObservedLatencyNs:    evaluation.GetObservedLatency().AsDuration().Nanoseconds(),
 	}
 	// An included signal's own score is authoritative; an excluded one still
 	// carries a score, but exclusion_reason is what explains why it did not

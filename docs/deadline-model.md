@@ -219,4 +219,18 @@ express the timings, and today the queryable half of it cannot.
 
 The fix is a unit change and a migration, not a redesign: store nanoseconds,
 which is exactly what the source `Duration` carries and what `BIGINT` holds
-without strain. It is owed, and not yet done.
+without strain. Migration `0002` does that for all six duration columns —
+`deadline_ns`, `total_elapsed_ns`, `observed_latency_ns`, `elapsed_ns`,
+`budget_ns` and the failure `elapsed_ns` — rather than only the two that
+provoked it, because utilisation is elapsed over budget and a schema mixing
+units in one ratio invites the arithmetic mistake it would then be used to
+investigate.
+
+**One thing is deliberately unresolved.** ADR-018's Decision section sketches
+these tables by column name, and those names still read `_ms`. That ADR has
+been implemented, and `docs/adr/README.md` requires a superseding ADR rather
+than an edit once a decision is built. Whether this counts as superseding a
+decision — the ADR did spell the unit into the column names — or as fixing an
+implementation that defeated the ADR's own stated intent of making lineage
+queryable is a judgement call, and it is recorded here rather than settled
+quietly in either direction.

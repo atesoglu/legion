@@ -168,3 +168,70 @@ func TestLineageIsWrittenEvenWhenNotRequestedInline(t *testing.T) {
 		t.Fatalf("no lineage row was written for decision %q", response.GetDecisionId())
 	}
 }
+
+// TestStoredDurationsResolveBelowAMillisecond guards the defect migration
+// 0002 exists for. The projection stored integer milliseconds, so every stage
+// of an 80 ms budget — all of which run in hundreds of microseconds — rounded
+// to 0 or 1, and no percentile was computable from the queryable half of
+// lineage at all (docs/deadline-model.md section 8).
+//
+// Budgets are the discriminator rather than elapsed times: they are
+// configured constants, so the assertion is deterministic. Under the old
+// schema they were 3, 8 and 12; expressed in nanoseconds the smallest is
+// 3,000,000.
+func TestStoredDurationsResolveBelowAMillisecond(t *testing.T) {
+	h, dsn := startPipelineWithLineage(t, settledHistory())
+	response := decide(t, h, transaction())
+
+	if fetchStoredLineage(t, dsn, response.GetDecisionId()) == nil {
+		t.Fatalf("no lineage row was written for decision %q", response.GetDecisionId())
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connecting to the lineage store: %v", err)
+	}
+	defer pool.Close()
+
+	rows, err := pool.Query(ctx,
+		`SELECT stage, elapsed_ns, budget_ns FROM execution_spans WHERE decision_id = $1`,
+		response.GetDecisionId())
+	if err != nil {
+		t.Fatalf("querying execution_spans: %v", err)
+	}
+	defer rows.Close()
+
+	spans := 0
+	for rows.Next() {
+		var (
+			stage               string
+			elapsedNs, budgetNs int64
+		)
+		if err := rows.Scan(&stage, &elapsedNs, &budgetNs); err != nil {
+			t.Fatalf("scanning execution_spans: %v", err)
+		}
+		spans++
+		if budgetNs < int64(time.Millisecond) {
+			t.Errorf("stage %q recorded budget_ns = %d, which is a millisecond value in a nanosecond column: "+
+				"durations are being stored at a resolution coarser than the stages they measure", stage, budgetNs)
+		}
+		if elapsedNs < 0 {
+			t.Errorf("stage %q recorded a negative elapsed_ns = %d", stage, elapsedNs)
+		}
+	}
+	if spans == 0 {
+		t.Fatal("no execution spans were persisted for the decision")
+	}
+
+	var deadlineNs int64
+	if err := pool.QueryRow(ctx,
+		`SELECT deadline_ns FROM decisions WHERE id = $1`, response.GetDecisionId()).Scan(&deadlineNs); err != nil {
+		t.Fatalf("querying decisions.deadline_ns: %v", err)
+	}
+	if deadlineNs < int64(time.Millisecond) {
+		t.Errorf("deadline_ns = %d, which is a millisecond value in a nanosecond column", deadlineNs)
+	}
+}

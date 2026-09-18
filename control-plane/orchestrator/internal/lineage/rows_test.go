@@ -82,8 +82,9 @@ func TestBuildRowsMapsTheDecisionRow(t *testing.T) {
 	if !d.Shadow {
 		t.Error("shadow was not carried through")
 	}
-	if d.DeadlineMs != 80 || d.TotalElapsedMs != 42 {
-		t.Errorf("deadline_ms/total_elapsed_ms = %d/%d, want 80/42", d.DeadlineMs, d.TotalElapsedMs)
+	if d.DeadlineNs != int64(80*time.Millisecond) || d.TotalElapsedNs != int64(42*time.Millisecond) {
+		t.Errorf("deadline_ns/total_elapsed_ns = %d/%d, want %d/%d",
+			d.DeadlineNs, d.TotalElapsedNs, int64(80*time.Millisecond), int64(42*time.Millisecond))
 	}
 	if string(d.RawLineage) != "raw" {
 		t.Errorf("raw_lineage = %q, want %q", d.RawLineage, "raw")
@@ -131,11 +132,45 @@ func TestBuildRowsMergesEvaluationsWithContributions(t *testing.T) {
 func TestBuildRowsCarriesSpansAndFailures(t *testing.T) {
 	r := buildRows(sampleEntry(), nil)
 
-	if len(r.executionSpans) != 1 || r.executionSpans[0].Stage != "feature_fetch" || r.executionSpans[0].ElapsedMs != 5 {
+	if len(r.executionSpans) != 1 || r.executionSpans[0].Stage != "feature_fetch" {
 		t.Fatalf("execution spans = %+v", r.executionSpans)
+	}
+	if got := r.executionSpans[0].ElapsedNs; got != int64(5*time.Millisecond) {
+		t.Errorf("elapsed_ns = %d, want %d", got, int64(5*time.Millisecond))
 	}
 	if len(r.decisionFailures) != 1 || r.decisionFailures[0].Component != "device" {
 		t.Fatalf("decision failures = %+v", r.decisionFailures)
+	}
+}
+
+// TestBuildRowsKeepsSubMillisecondDurations is the regression this schema's
+// second migration exists for: every stage of an 80 ms budget runs in
+// hundreds of microseconds, and the millisecond columns this replaced
+// rounded all of them to zero (docs/deadline-model.md section 8).
+func TestBuildRowsKeepsSubMillisecondDurations(t *testing.T) {
+	entry := sampleEntry()
+	entry.TotalElapsed = durationpb.New(1616 * time.Microsecond)
+	entry.Spans = []*riskv1.ExecutionSpan{
+		{Stage: "sentinel", Elapsed: durationpb.New(550 * time.Microsecond), Budget: durationpb.New(3 * time.Millisecond)},
+	}
+	entry.Evaluations[0].ObservedLatency = durationpb.New(237 * time.Microsecond)
+
+	r := buildRows(entry, nil)
+
+	if got := r.decision.TotalElapsedNs; got != 1_616_000 {
+		t.Errorf("total_elapsed_ns = %d, want 1616000", got)
+	}
+	if got := r.executionSpans[0].ElapsedNs; got != 550_000 {
+		t.Errorf("elapsed_ns = %d, want 550000", got)
+	}
+	var velocity int64
+	for _, e := range r.agentEvaluations {
+		if e.AgentID == "velocity" {
+			velocity = e.ObservedLatencyNs
+		}
+	}
+	if velocity != 237_000 {
+		t.Errorf("observed_latency_ns = %d, want 237000", velocity)
 	}
 }
 

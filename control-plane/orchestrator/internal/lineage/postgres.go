@@ -107,11 +107,11 @@ func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
 	tag, err := tx.Exec(ctx, `
 		INSERT INTO decisions (
 			id, transaction_id, decided_at, decision, aggregate_score, degradation_state,
-			policy_id, policy_version, policy_fallback, shadow, deadline_ms, total_elapsed_ms, raw_lineage
+			policy_id, policy_version, policy_fallback, shadow, deadline_ns, total_elapsed_ns, raw_lineage
 		) VALUES ($1, $2, to_timestamp($3), $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO NOTHING`,
 		d.ID, d.TransactionID, d.DecidedAtUnix, d.Decision, d.AggregateScore, d.DegradationState,
-		d.PolicyID, d.PolicyVersion, d.PolicyFallback, d.Shadow, d.DeadlineMs, d.TotalElapsedMs, d.RawLineage,
+		d.PolicyID, d.PolicyVersion, d.PolicyFallback, d.Shadow, d.DeadlineNs, d.TotalElapsedNs, d.RawLineage,
 	)
 	if err != nil {
 		return err
@@ -127,11 +127,11 @@ func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
 			INSERT INTO agent_evaluations (
 				decision_id, agent_id, outcome_kind, score, confidence, weight_basis_points,
 				weighted_contribution, included, exclusion_reason, agent_version,
-				failure_kind, failure_component, failure_message, failure_retryable, observed_latency_ms
+				failure_kind, failure_component, failure_message, failure_retryable, observed_latency_ns
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			d.ID, e.AgentID, e.OutcomeKind, e.Score, e.Confidence, e.WeightBasisPoints,
 			e.WeightedContribution, e.Included, e.ExclusionReason, e.AgentVersion,
-			e.FailureKind, e.FailureComponent, e.FailureMessage, e.FailureRetryable, e.ObservedLatencyMs,
+			e.FailureKind, e.FailureComponent, e.FailureMessage, e.FailureRetryable, e.ObservedLatencyNs,
 		); err != nil {
 			return err
 		}
@@ -139,9 +139,9 @@ func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
 
 	for _, span := range r.executionSpans {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO execution_spans (decision_id, stage, elapsed_ms, budget_ms)
+			INSERT INTO execution_spans (decision_id, stage, elapsed_ns, budget_ns)
 			VALUES ($1, $2, $3, $4)`,
-			d.ID, span.Stage, span.ElapsedMs, span.BudgetMs,
+			d.ID, span.Stage, span.ElapsedNs, span.BudgetNs,
 		); err != nil {
 			return err
 		}
@@ -149,9 +149,9 @@ func insertAll(ctx context.Context, tx pgx.Tx, r rows) error {
 
 	for _, failure := range r.decisionFailures {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO decision_failures (decision_id, kind, component, message, elapsed_ms, retryable)
+			INSERT INTO decision_failures (decision_id, kind, component, message, elapsed_ns, retryable)
 			VALUES ($1, $2, $3, $4, $5, $6)`,
-			d.ID, failure.Kind, failure.Component, failure.Message, failure.ElapsedMs, failure.Retryable,
+			d.ID, failure.Kind, failure.Component, failure.Message, failure.ElapsedNs, failure.Retryable,
 		); err != nil {
 			return err
 		}
