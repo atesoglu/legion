@@ -9,7 +9,9 @@ mocked tool execution. What is still only documented intent: a
 `control-plane/capability/internal/broker/manifest.go`); mTLS/workload
 identity (`workload_id` is asserted by the caller today, a Phase 1 stand-in,
 same posture the rest of the platform takes pending ADR-011); and durable
-audit storage (every check is logged, nothing persists it — and ADR-020,
+audit storage (every check is logged and counted by verdict in
+`legion.capability.checks`, but nothing persists the audit record itself —
+and ADR-020,
 which decides where metrics, logs and traces go, deliberately does not cover
 this: a capability audit record is evidential, like lineage, not operational
 like a log, so its store is still undecided).

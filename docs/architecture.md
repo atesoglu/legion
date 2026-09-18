@@ -1,9 +1,10 @@
 # Architecture
 
-Status: Phase 2. The deterministic decision path described here is implemented
-and exercised end to end, and Phase 2's capability runtime and investigation
-plane (partially) are too. Where behaviour does not exist yet, it says so; §9
-lists what remains.
+Status: Phase 2 complete; Phase 4's observability half in progress. The
+deterministic decision path described here is implemented and exercised end
+to end, and Phase 2's capability runtime and investigation plane (partially)
+are too. The services now emit metrics, though nothing collects them. Where
+behaviour does not exist yet, it says so; §9 lists what remains.
 
 ## 1. What Legion is
 

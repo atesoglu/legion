@@ -253,8 +253,18 @@ investigation path at 100 % while sampling the decision path: the decision
 path already has unsampled per-stage timings in `DecisionLineage`, and Zone 6
 has nothing at all.
 
-**Nothing in this section is built.** ADR-020 fixes the destinations; the
-instrumentation, the collector and the stores do not exist yet.
+**Almost none of this section is built.** One piece is:
+`legion.investigation.tasks` counts task outcomes — completed, retrying,
+failed, dead-lettered — which is what makes a dead-lettered task something
+other than a silent row. It deliberately carries no `agent_id` attribute,
+because §6 anticipates thousands of logical agents and an unbounded label
+destroys a metric store; "which agent is dead-lettering" is a per-entity
+question and is answered from the `tasks` table.
+
+Everything else is unbuilt: no correlation identifiers on investigation-path
+requests, no queue-depth, tool or LLM metrics, no cost recording of any kind,
+and no collector or store to send any of it to. Nothing collects even the
+one counter that exists.
 
 ## 9. Testing
 

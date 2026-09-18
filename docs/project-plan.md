@@ -1065,6 +1065,15 @@ by OTLP push to a collector rather than by being scraped, logs and traces are
 stored in Elasticsearch and read in Kibana, the decision path is sampled
 while the investigation path is not, and Zone 3 emits nothing at all.
 
+**Partially built.** Of the metrics listed below, the latency percentiles are
+now instrumented (`legion.decision.duration` end to end at the gateway, plus
+per-stage and per-agent histograms in the orchestrator, with ADR-009's 80 ms
+deadline as an explicit bucket boundary). Fallback rate, model timeout and
+error rates, feature-lookup latency, queue depth, CPU and memory are not.
+The OpenTelemetry span tree below does not exist at all: there is no tracing,
+and correlation identifiers are not yet attached to requests. Nothing
+collects any of the metrics that do exist.
+
 All requests should carry correlation identifiers.
 
 OpenTelemetry should provide:
@@ -1098,6 +1107,35 @@ queue depth
 CPU
 memory
 ```
+
+What is actually emitted today, which is the authoritative list because the
+one above is a wish:
+
+```text
+legion.decision.duration          gateway, end to end, by outcome
+legion.evaluation.duration        orchestrator total, by decision
+legion.evaluation.stage.duration  by stage
+legion.agent.duration             by agent, and signal vs failure
+
+legion.lineage.entries            written | dropped | failed
+legion.casetrigger.publications   published | dropped | failed
+legion.investigation.tasks        completed | retrying | failed | dead_letter
+legion.capability.checks          by verdict
+legion.gateway.dedup.claims       new | replayed | conflict | in_flight
+legion.breaker.transitions        open | closed
+```
+
+Latency instruments are in seconds, the base unit Prometheus specifies, with
+ADR-009's 80 ms deadline as an explicit bucket boundary. Names carry no
+`_total` suffix: the Prometheus exporter adds it, and spelling it here would
+produce `_total_total`.
+
+No metric carries an identifier as an attribute — not `transaction_id`,
+`account_id`, `decision_id`, `case_id`, `investigation_id`, `task_id` or
+`caller_id`. `agent_id` appears only on decision-path metrics, where the agent
+set is small and fixed by configuration (ADR-014); Zone 6 anticipates
+thousands of logical agents, so its metrics carry no agent attribute and
+per-agent questions are answered from the `tasks` table instead.
 
 Logs must avoid leaking sensitive transaction data.
 
@@ -1466,6 +1504,20 @@ it, a dead-lettered investigation task is invisible, and ADR-009's 80 ms
 budget has never been measured. The cluster half — manifests, Helm, network
 policies, KEDA — and ADR-011's mTLS/workload identity are deliberately
 deferred, since neither can be verified without a cluster.
+
+Progress within the first half:
+
+| | Status |
+|---|---|
+| OpenTelemetry pipeline in the shared process lifecycle | Built |
+| Counters for the previously silent failures | Built |
+| Latency histograms, end to end and per stage and agent | Built |
+| ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Not started |
+| `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Not started |
+| Tracing and correlation identifiers | Not started |
+
+Nothing collects the signals that are emitted, so no figure from §28's list
+can be reported yet. Zone 3 emits nothing by design (ADR-020).
 
 Implement:
 
