@@ -1058,6 +1058,13 @@ Do not assume a single metric such as CPU utilization is sufficient for inferenc
 
 # 28. Observability
 
+**Where these signals go is decided by ADR-020**, which postdates this
+section. This list is the *what*; the ADR is the *where*, and it overrides
+this section wherever the two differ. In particular: metrics reach Prometheus
+by OTLP push to a collector rather than by being scraped, logs and traces are
+stored in Elasticsearch and read in Kibana, the decision path is sampled
+while the investigation path is not, and Zone 3 emits nothing at all.
+
 All requests should carry correlation identifiers.
 
 OpenTelemetry should provide:
@@ -1450,6 +1457,15 @@ the same shared model server.**
 ---
 
 ## Phase 4 — Kubernetes, Zero-Trust Deployment & Observability
+
+**Phase 4 is being taken in two parts, and only the first is in progress.**
+The observability half (ADR-020) plus the packaging ADR-016 already specifies
+comes first, because every remaining gap carried forward from Phases 1 and 2
+terminates in it: a silent lineage-queue drop can only be fixed by counting
+it, a dead-lettered investigation task is invisible, and ADR-009's 80 ms
+budget has never been measured. The cluster half — manifests, Helm, network
+policies, KEDA — and ADR-011's mTLS/workload identity are deliberately
+deferred, since neither can be verified without a cluster.
 
 Implement:
 
@@ -2147,6 +2163,14 @@ with a variable per-invocation cost before — the deterministic engines and
 the sentinel cost a fixed amount of CPU time regardless of what they decide.
 An investigation's cost depends on how many agents it activated and how much
 each one made the model do, which is a genuinely new kind of thing to measure.
+
+**"First-class" is not the same as "a metric", and ADR-020 splits this list
+in two.** Aggregates — tokens by agent, request rates, GPU utilisation — are
+metrics and go to Prometheus. Anything keyed by a single investigation is a
+business record and goes to PostgreSQL beside the case, because a metric
+store has short retention, aggregates by design, and cannot answer "what did
+case X cost" months later. The phrasing above is retained because it came
+from the source material; the destination is the ADR's.
 
 ---
 

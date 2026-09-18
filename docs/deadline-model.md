@@ -134,6 +134,14 @@ end-to-end, under realistic concurrency:
 Averages will not be reported alone. A mean latency figure hides exactly the
 behaviour an 80 ms P99 target is about.
 
+ADR-020 decides where these come from: histograms exported by OTLP to a
+collector and stored in Prometheus, per stage and end-to-end. None of it is
+built, so §7 still stands. Note that the stage numbers have a second, older
+source — `DecisionLineage.ExecutionSpan` already records the elapsed time and
+the budget granted for `feature_fetch`, `deterministic_agents` and `sentinel`
+on every decision, unsampled and durably, and nothing has ever read it back.
+The first measurement of this model may be a query, not an instrument.
+
 ## 7. Current status
 
 Not measured. The 80 ms figure is a configured default

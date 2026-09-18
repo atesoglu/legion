@@ -9,7 +9,10 @@ mocked tool execution. What is still only documented intent: a
 `control-plane/capability/internal/broker/manifest.go`); mTLS/workload
 identity (`workload_id` is asserted by the caller today, a Phase 1 stand-in,
 same posture the rest of the platform takes pending ADR-011); and durable
-audit storage (every check is logged, nothing persists it — Phase 4 scope).
+audit storage (every check is logged, nothing persists it — and ADR-020,
+which decides where metrics, logs and traces go, deliberately does not cover
+this: a capability audit record is evidential, like lineage, not operational
+like a log, so its store is still undecided).
 This model governs Zone 6 investigation agents (ADR-017) as well as the
 behavioural agent — there is one enforcement mechanism, not one per zone.
 

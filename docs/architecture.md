@@ -318,15 +318,16 @@ that forbids `unsafe` and denies `unwrap` on the decision path.
 Zone 4 will be `agents/`, holding the behavioural agent and the inference
 runtime. Zone 6 is `investigation/` (ADR-017), holding the investigation
 controller and the generic worker — async, and never a dependency of the
-synchronous decision path. Directories from the long-term plan that have no
-implementation purpose yet are deliberately absent. Empty directories that
-promise work are worse than no directories.
+synchronous decision path.
 
 Directories from the long-term plan that have no implementation purpose yet —
 `inference/`, `feature-store/`, `simulator/`, `replay/`, `evaluation/`,
 `benchmarks/`, `policy/`, `model-registry/`, `observability/`,
 `infrastructure/`, `security/` — are deliberately absent. Empty directories
-that promise work are worse than no directories.
+that promise work are worse than no directories. `deploy/` is the next to
+arrive: ADR-016 fixes its shape (`deploy/docker/`, `deploy/services.yaml`)
+and ADR-020 adds `deploy/observability/`, but neither exists yet, and by the
+rule above neither should until something is written into it.
 
 ## 9. What is not built
 
@@ -399,7 +400,12 @@ rejected. Case creation (Zone 6) can build on this key from its first version
 instead of needing a retrofit.
 
 There is also no observability: no metrics and no tracing, so none of the
-behaviour above is currently visible in operation.
+behaviour above is currently visible in operation. ADR-020 now decides where
+each signal goes — OTLP push to a collector; logs and traces to
+Elasticsearch, read in Kibana; metrics to Prometheus, explored in Grafana;
+per-investigation cost to PostgreSQL rather than to a metric store — but that
+is a decision, not an implementation. Nothing emits, collects or stores any
+of it yet.
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made.

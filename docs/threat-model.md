@@ -284,7 +284,8 @@ again to obtain a favourable outcome.
   eventual answer, which is a caller-visible gap worth revisiting if it
   proves to matter in practice.
 - **Detection.** Duplicate-subject rate; decision reuse attempts. Neither is
-  instrumented yet — see the observability gap in `architecture.md` §9.
+  instrumented yet — both are counters ADR-020 gives a destination but nothing
+  emits them; see the observability gap in `architecture.md` §9.
 - **Residual risk.** Legion does not control the caller's use of its response.
   If the calling system does not bind a decision to the transaction it
   requested, replay is possible outside Legion's boundary. That boundary is
@@ -333,7 +334,9 @@ exfiltrate data gathered during a case.
   declaration never exceeds the grant and that no agent holds a tool only
   another agent declares.
 - **Detection.** Tool-call audit trail (logged, not yet persisted anywhere
-  durable — Phase 4 scope); finding-to-evidence reference completeness (a
+  durable — and ADR-020 does not cover it: an audit record is evidential like
+  lineage, not operational like a log, so where it persists is still
+  undecided); finding-to-evidence reference completeness (a
   finding with no cited evidence is itself a signal); per-agent confidence
   distribution monitored the same way per-agent score distribution is
   monitored for T-01.

@@ -6,7 +6,9 @@ it enters the platform. Everything between zones is still open — services spea
 plaintext gRPC and hold no workload identity. Capability enforcement (ADR-005)
 is partially built: `control-plane/capability` runs and is enforced for Zone 6's
 tool calls, but nothing on the real-time deterministic/behavioural path calls
-it yet. Network, identity and workload hardening are Phase 4. Zone 6
+it yet. Network, identity and workload hardening are Phase 4, of which only
+the observability boundary has been decided so far (ADR-020) and none of it
+built. Zone 6
 (investigation, ADR-017) is partially built: the controller, generic worker,
 task queue and Postgres schema all run; the tool/model calls it makes are
 still mocked.
@@ -80,6 +82,16 @@ drawn in [architecture §3](architecture.md#3-component-map).
 | Zone 2 → 6 | One direction, async: a `CaseTrigger` message, published by the lineage writer. Zone 2 holds no connection back into Zone 6 |
 | Zone 6 → 2 | Only via `CapabilityService`, exactly as Zone 4 — an investigation worker is not exempt from the capability boundary |
 | Zone 6 → 5 | **Forbidden**, same as Zone 4 — investigation state lives in its own Zone 6 store, never in the decision-path feature/lineage store |
+| Zones 1, 2, 6 → observability | One direction, outbound: OTLP to the collector (ADR-020). The collector opens no connection into any zone |
+| Zone 3 → observability | **None.** The data plane emits no telemetry, so the row above it stands unqualified; Zone 3 is observed from Zone 2's record of it |
+| observability → anywhere | Egress to its own stores only. It reaches no Legion zone, so it cannot be a path into one |
+
+The observability plane is not a zone. It holds no risk logic, makes no
+decision, and nothing in Legion reads from it. It is listed here because
+ADR-020 introduces the first component every zone talks to, and the direction
+of those connections is a boundary property rather than an operational
+detail: telemetry is pushed precisely so that the monitoring plane never
+needs inbound reach into a zone.
 
 ## 3. What "zero trust" means here, and what it does not
 

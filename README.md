@@ -29,6 +29,7 @@ investigation, capability-checked at every tool call.
 | Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
 | Capability runtime | Full enforcement pipeline (identity, grant, scope, constraint, budget; ADR-005) against a static manifest; one real caller (`investigation/worker`); no caller yet on the fixed-enum path (deterministic agents are push-style, behavioural agent doesn't exist) |
 | Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017), every tool call checked by the capability runtime; `RegisterAgent` API and real tool/model calls not implemented |
+| Observability | **Decided, not built** (ADR-020): OTLP push to a collector; logs and traces to Elasticsearch, read in Kibana; metrics to Prometheus, explored in Grafana; per-investigation cost to PostgreSQL. Nothing emits, collects or stores any of it yet |
 | Behavioural agent, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
@@ -173,7 +174,7 @@ Restructured 2026-09-16 to fold in an investigation/case-management scope
 | 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
 | 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | **Complete** — transaction idempotency (ADR-019), the investigation plane's case/task/worker loop (ADR-017, two seeded agents) and the capability runtime (ADR-005) all shipped. Known gaps carried into later phases: no `RegisterAgent` API, no mTLS/workload identity (still the Phase 1 shared-key/caller-asserted stand-in), no durable capability audit storage, and every investigation agent's tool/model call is mocked pending Phase 3's shared inference runtime |
 | 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
-| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | Not started |
+| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | **In progress, split in two.** The observability half is decided (ADR-020) and the packaging it depends on is specified (ADR-016); neither is built. The cluster half — manifests, Helm, network policies, KEDA — and ADR-011's mTLS are deferred, since neither can be verified without a cluster |
 | 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |
 | 6 | Failure injection, adversarial scenarios, resilience measurement — decision path and investigation path | Not started |
 | 7 | Benchmarks, cost-per-investigation, results, portfolio release | Not started |

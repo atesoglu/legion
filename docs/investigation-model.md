@@ -236,9 +236,25 @@ meantime (see `project-plan.md` §50 for the full list). In short: every
 investigation-path request carries `case_id`, `investigation_id`, `task_id`
 and `agent_id` alongside the correlation IDs the decision path already
 carries; task/queue/tool/LLM metrics are additive to the existing metrics
-list; and **cost per investigation is a first-class, queryable metric** —
-the first component Legion has ever had whose per-invocation cost is
-variable rather than fixed CPU time.
+list; and cost per investigation is first-class — the first component Legion
+has ever had whose per-invocation cost is variable rather than fixed CPU
+time.
+
+ADR-020 decides where each of those lands, and splits cost in two. Aggregate
+cost — tokens by agent, request rates — is a metric and goes to Prometheus.
+**Per-investigation cost is not a metric.** It is asked about per entity, long
+after the fact, and must survive as long as the case does, so it is recorded
+in PostgreSQL beside the investigation in the shape
+`tool_executions.duration_ms` already takes. A metric store cannot answer
+"what did case X cost" and is not asked to.
+
+The correlation identifiers above are also why ADR-020 samples the
+investigation path at 100 % while sampling the decision path: the decision
+path already has unsampled per-stage timings in `DecisionLineage`, and Zone 6
+has nothing at all.
+
+**Nothing in this section is built.** ADR-020 fixes the destinations; the
+instrumentation, the collector and the stores do not exist yet.
 
 ## 9. Testing
 

@@ -50,9 +50,11 @@ Four constraints shape the decision, and they are not the usual ones:
    unaudited egress path for exactly the data the rest of the architecture
    is arranged to contain.
 
-4. **The data plane is Rust.** Whatever is chosen needs a working Rust story,
-   not only a Go one, and the two ecosystems are not at the same level of
-   maturity for this.
+4. **The data plane is Rust, and is also the one part of the platform
+   forbidden to make outbound calls.** Whatever is chosen would need a Rust
+   story as well as a Go one, and the two ecosystems are not at the same
+   level of maturity for this. Decision 1 resolves the tension by not
+   requiring one.
 
 A fifth constraint is dormant but will not stay that way: ADR-011's zero-trust
 model has to express what may connect to what. Whether telemetry is pulled or
@@ -61,16 +63,17 @@ zone, including Zone 3, which is otherwise reachable only from Zone 2.
 
 ## Decision
 
-Observability is not one decision. It is four, and they are recorded
-separately because bundling them is how the wrong storage ends up holding the
-wrong signal.
+Observability is not one decision. The signals are recorded separately
+because bundling them is how the wrong storage ends up holding the wrong
+signal.
 
 ### 1. Emission: OTLP, push, outbound-only
 
-Every Legion process emits metrics and traces as OTLP to an OpenTelemetry
-Collector. No Legion process holds a connection to a storage system, knows a
-backend's address, or is reconfigured when a backend changes. The Collector is
-the only component that knows where anything is stored.
+Every Legion process that emits telemetry at all emits it as OTLP to an
+OpenTelemetry Collector — which, per the exception below, means every process
+outside Zone 3. No Legion process holds a connection to a storage system,
+knows a backend's address, or is reconfigured when a backend changes. The
+Collector is the only component that knows where anything is stored.
 
 This is chosen over letting a monitoring system scrape each service because it
 inverts the direction of the connection. A scrape is inbound into every zone;
@@ -88,6 +91,22 @@ lineage writer's bounded channel.
 
 The Collector is not a Legion zone. It is platform infrastructure that
 receives from every zone and may initiate connections to none of them.
+
+**Zone 3 is excepted, and emits no telemetry of its own.**
+`security-boundaries.md` states that the data plane makes no outbound calls
+at all, and ADR-002, ADR-006 and ADR-013 all lean on that: the sentinel is a
+pure function of its request, which is what makes deterministic replay
+possible and what leaves a compromised data plane with nowhere to send
+anything. An OTLP exporter is an outbound call. Granting Zone 3 egress to
+observe four sub-millisecond pure functions would spend a real security
+property on very little, particularly since the orchestrator already records
+what Zone 3 would report — `AgentEvaluation.observed_latency` per agent and an
+`ExecutionSpan` for the sentinel stage, on every decision. Zone 3 is
+therefore observed from Zone 2 rather than instrumented in itself.
+
+This is a narrower rule than "every process emits", and it is the reason the
+shared Rust instrumentation crate is the last thing built rather than the
+first.
 
 ### 2. Logs: emitted to stdout, shipped to Elasticsearch, read in Kibana
 
@@ -253,9 +272,9 @@ model-backed agent with variable latency and variable cost.
 
 ## Trade-offs
 
-- **Four new components to operate** — Collector, Prometheus, Grafana,
+- **Six new components to operate** — Collector, Prometheus, Grafana,
   Elasticsearch, Kibana and a log shipper — against a platform that currently
-  has eight. The observability stack is not smaller than the thing it
+  has eight. The observability stack is not much smaller than the thing it
   observes, which is uncomfortable and normal.
 - **Elasticsearch is expensive for traces.** Every span is indexed. At low
   volume this is irrelevant; the revisit condition below exists because it
@@ -270,18 +289,24 @@ model-backed agent with variable latency and variable cost.
 - **Instrumentation costs something inside the 80 ms budget**, and the cost is
   currently unknown, because measuring it requires the instrumentation being
   measured. The first thing metrics will show is the cost of metrics.
-- **The Rust side is less well served.** The OpenTelemetry Rust SDK is younger
-  than the Go one, and the workspace's lint posture (`unsafe_code = forbid`,
-  `unwrap_used`/`panic`/`arithmetic_side_effects` denied) constrains the
-  wrapper written around it.
+- **Zone 3 is a blind spot by construction.** Four services emit nothing about
+  themselves, and every question about them is answered from Zone 2's
+  observation of them. If a data-plane fault is ever invisible from outside,
+  this is the decision that made it so.
 
 ## Consequences
 
-- A shared Go package and a shared Rust crate own instrumentation setup, so
-  that no service configures an exporter itself and every service exposes the
-  same signals. For Go this belongs with the existing process-lifecycle code
-  in `internal/platform/runtime`, which already owns start, stop and logging
-  for all five Go services.
+- A shared Go package owns instrumentation setup, so that no service
+  configures an exporter itself and every service exposes the same signals.
+  It belongs with the existing process-lifecycle code in
+  `internal/platform/runtime`, which already owns start, stop and logging for
+  all five Go services.
+- **No Rust instrumentation is written, because every Rust service is in Zone
+  3.** That falls out of decision 1's exception rather than being a separate
+  choice, and it removes the awkward part of this phase: no wrapper around a
+  younger SDK, nothing to reconcile with the Rust workspace's
+  `unsafe_code = forbid` and denied `unwrap`/`panic`/`arithmetic_side_effects`
+  lints, and no second instrumentation library to keep aligned with the first.
 - **ADR-016's packaging becomes a prerequisite rather than a later phase
   item.** Shipping logs from a file requires the services to be containerised,
   which ADR-016 already specifies in full (two parameterised Dockerfiles, root
@@ -308,10 +333,6 @@ model-backed agent with variable latency and variable cost.
   redundant, and nothing in it reads lineage back either — that is replay
   (ADR-013) and Phase 5, and the overlap between traces and lineage is a
   reason to build the reader, not a reason to skip it.
-- Instrumenting the Rust data plane is explicitly lower priority than
-  instrumenting Go. The engines are sub-millisecond pure functions whose
-  latency is already observed and recorded by the orchestrator as
-  `AgentEvaluation.observed_latency`; the visibility gap is in Go.
 
 ## Revisit if
 
@@ -328,3 +349,7 @@ model-backed agent with variable latency and variable cost.
   if losing metrics and traces together during an incident repeatedly hides
   the incident — in which case per-signal collectors or direct scraping of a
   subset of services is reconsidered against the zero-trust cost.
+- A data-plane fault appears that Zone 2's view of Zone 3 cannot explain, at
+  which point the Zone 3 telemetry exception is re-examined — noting that the
+  alternative granting the least egress is an inbound scrape of Zone 3, which
+  trades this decision's direction for the previous one's.
