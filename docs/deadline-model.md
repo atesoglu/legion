@@ -238,11 +238,30 @@ provoked it, because utilisation is elapsed over budget and a schema mixing
 units in one ratio invites the arithmetic mistake it would then be used to
 investigate.
 
-**One thing is deliberately unresolved.** ADR-018's Decision section sketches
-these tables by column name, and those names still read `_ms`. That ADR has
-been implemented, and `docs/adr/README.md` requires a superseding ADR rather
-than an edit once a decision is built. Whether this counts as superseding a
-decision — the ADR did spell the unit into the column names — or as fixing an
-implementation that defeated the ADR's own stated intent of making lineage
-queryable is a judgement call, and it is recorded here rather than settled
-quietly in either direction.
+**Resolved.** Two things were open here and the owner settled both, in favour
+of the naming discipline already in place rather than either extreme
+(forcing one unit everywhere, or leaving the mismatch to fester):
+
+- **No project-wide duration unit.** Lineage stays `_ns`, investigation stays
+  `_ms`, metrics stay Prometheus's `_seconds` -- each is its own ecosystem's
+  convention, and the rule going forward is that a duration-bearing field or
+  column name is ALWAYS suffixed with its unit, with no exceptions, so that
+  reading the value never requires knowing which table you're in first. That
+  is what already made this defect legible in the first place: `elapsed_ms`
+  holding only `{0, 1}` was visible precisely because the column's name
+  promised a resolution the values didn't have. Unifying the unit was
+  rejected again, not because it's wrong in principle, but because the
+  suffix convention already gives the same safety without a cross-store
+  migration or a conversion step at every query boundary.
+- **ADR-018's Decision section is corrected in place.** Its schema sketch
+  named `deadline_ms`, `elapsed_ms` and the rest; those are edited to read
+  `deadline_ns`, `elapsed_ns` and so on, matching migration `0002`, with a
+  note explaining the correction and why it isn't a superseding change: the
+  decision recorded there -- normalise the blob into per-concept tables --
+  never changed, only the unit the sketch spelled out did, and leaving a
+  known resolution defect in the record once its consequences were
+  understood was worse than a narrow, explained exception to "supersede
+  rather than edit." `docs/adr/README.md` now states that exception
+  explicitly, scoped to literal details that spell out a defect rather than
+  a rejected decision, so it isn't reached for again for something that
+  actually changes what was decided.

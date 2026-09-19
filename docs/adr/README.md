@@ -9,6 +9,17 @@ from the ADR, either the implementation is wrong or the ADR has been
 superseded — and once a decision has been implemented, a superseding ADR is
 written rather than the original edited.
 
+**Narrow exception:** a schema sketch, name or other literal detail that
+spells out a defect rather than a rejected decision may be corrected in
+place, with a note recording the correction and why it isn't a superseding
+change. This happened once: ADR-018's Decision section named every lineage
+duration column `_ms`; that resolution couldn't hold the sub-millisecond
+values it needed to, migration `0002` corrected the columns to `_ns`, and the
+decision itself — normalise the blob into per-concept tables — never changed.
+Reaching for this exception a second time for something that changes what
+was decided, rather than how it was spelled, is the mistake it exists to
+prevent.
+
 Before a decision has been implemented there is nothing to be archaeological
 about, and an ADR may be revised in place. A superseded/superseding pair
 describing two designs neither of which was ever built is confusion, not

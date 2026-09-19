@@ -30,22 +30,34 @@ for.
 `decision_lineage` is replaced by a normalised set of tables, one per
 concept the `DecisionLineage` message already distinguishes:
 
+> **Correction, 2026-09-19:** this sketch originally spelled every duration
+> column `_ms`. Reading `ExecutionSpan` back (`deadline-model.md` §7) found
+> that resolution couldn't represent the sub-millisecond stages it needed
+> to: `elapsed_ms` held only the values `{0, 1}` across 61 real decisions.
+> Migration `0002` (commit `dd7a805`) renamed and rescaled all six duration
+> columns to `_ns`, matching the nanosecond `Duration` the source protobuf
+> already carries. The decision recorded below — normalise the blob into
+> per-concept tables — did not change; only the unit the sketch names did,
+> and the sketch is corrected in place rather than left to read a defect as
+> if it were the design. See `docs/adr/README.md`'s exception for this exact
+> case.
+
 ```text
 decisions
     id (= decision_id), transaction_id, decided_at, decision,
     aggregate_score, degradation_state, policy_id, policy_version,
-    shadow, deadline_ms, total_elapsed_ms
+    shadow, deadline_ns, total_elapsed_ns
 
 agent_evaluations
     id, decision_id (FK), agent_id, outcome (signal|failure),
     score, confidence, weight_basis_points, weighted_contribution,
-    included, exclusion_reason, agent_version, observed_latency_ms
+    included, exclusion_reason, agent_version, observed_latency_ns
 
 execution_spans
-    id, decision_id (FK), stage, elapsed_ms, budget_ms
+    id, decision_id (FK), stage, elapsed_ns, budget_ns
 
 decision_failures
-    id, decision_id (FK), kind, component, message, elapsed_ms, retryable
+    id, decision_id (FK), kind, component, message, elapsed_ns, retryable
 
 governed_versions
     decision_id (FK), artefact (agent|policy|feature_catalogue|model|

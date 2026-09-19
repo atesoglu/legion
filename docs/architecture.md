@@ -425,10 +425,6 @@ single-threaded local profile (`deadline-model.md` §7) explicitly recorded as
 a floor. They are written down so that a future benchmark knows where to look
 first, not because anything is known to be wrong.
 
-They were raised in an external review whose other findings did not survive
-being checked against the code. That is not a reason to discard these, and it
-is a reason to state precisely what is and is not known about each.
-
 - **The lineage writer does not batch.** One goroutine writes one entry per
   transaction across five tables. Its inbound queue holds 256 entries and
   drops beyond that, so sustained write rates above what a single serial

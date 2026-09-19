@@ -1533,6 +1533,15 @@ Progress within the first half:
 | Tracing and correlation identifiers | Built, verified for one hop: gRPC interceptors and Redis Streams field propagation carry a trace across the decision and investigation planes; a live single-hop trace (error status included) was read back from Elasticsearch through the collector's `tail_sampling` processor. Multi-hop continuity is unit-tested, not exercised live |
 | Kubernetes manifests, Helm, network policies, KEDA | Deferred (cluster half) |
 
+The observability half is otherwise complete. **Backlog, added after the
+fact rather than part of the original plan**: a dashboard in Grafana and
+alerting on top of it (and/or Kibana) -- every signal above is collectible
+and was verified reaching its destination, but nothing renders it for a
+human or pages anyone when it moves. Appended to the end of the backlog on
+purpose: every other Phase 4 observability item existed as a named gap
+before this document said so; this one didn't, and should not be read as if
+it had been.
+
 The local stack proves the pipeline works end to end; no real deployment runs
 it continuously, so no figure from §28's list can be reported from a live
 system yet. Zone 3 emits nothing by design (ADR-020).
