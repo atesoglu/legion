@@ -133,6 +133,11 @@ internal/         Go · configuration, process lifecycle, pseudonymisation
 protocol/
   protobuf/       authoritative .proto contracts
   gen/go/         generated bindings (committed; CI verifies they match)
+deploy/           deployment identity and packaging (ADR-016)
+  services.yaml   the service set as data: zone, language, source, port
+  docker/         two parameterised Dockerfiles that build every image
+  observability/  ADR-020 verification stack: Collector, Prometheus, Grafana,
+                  Elasticsearch, Kibana, Filebeat — local, not the cluster target
 test/e2e/         cross-service suite: starts the real binaries
 docs/             architecture documentation and ADRs
 ```

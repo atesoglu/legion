@@ -285,6 +285,12 @@ legion/
 ├── protocol/
 │   ├── protobuf/         authoritative .proto contracts
 │   └── gen/go/           generated bindings (committed; CI verifies)
+├── deploy/               deployment identity and packaging (ADR-016)
+│   ├── services.yaml     the service set as data: zone, language, source, port
+│   ├── docker/           two parameterised Dockerfiles that build every image
+│   └── observability/    ADR-020 verification stack (Collector, Prometheus,
+│                         Grafana, Elasticsearch, Kibana, Filebeat) — local,
+│                         not the Kubernetes/Helm cluster target
 ├── docs/
 │   └── adr/              architecture decision records
 ├── Cargo.toml            Rust workspace root
@@ -428,8 +434,9 @@ is a reason to state precisely what is and is not known about each.
   writer sustains would show up as a rising
   `legion.lineage.entries{outcome="dropped"}` rather than as latency — the
   decision path is unaffected by design (ADR-007). Batched inserts or `COPY`
-  are the obvious remedy. The rate at which this begins is unmeasured, and
-  the counter that would reveal it is emitted but not yet collected.
+  are the obvious remedy. The rate at which this begins is unmeasured; the
+  counter that would reveal it is collectible (`deploy/observability/` proves
+  it reaches Prometheus) but nothing runs that stack continuously.
 - **The circuit breaker serialises on a mutex.** One `sync.Mutex` per agent,
   not one globally, so contention is already striped by the dimension that
   matters; with three registered agents that is three locks, each taken twice

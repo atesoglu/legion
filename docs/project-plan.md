@@ -1071,8 +1071,11 @@ per-stage and per-agent histograms in the orchestrator, with ADR-009's 80 ms
 deadline as an explicit bucket boundary). Fallback rate, model timeout and
 error rates, feature-lookup latency, queue depth, CPU and memory are not.
 The OpenTelemetry span tree below does not exist at all: there is no tracing,
-and correlation identifiers are not yet attached to requests. Nothing
-collects any of the metrics that do exist.
+and correlation identifiers are not yet attached to requests.
+`deploy/observability/` (§28's build-order table above) proves the metrics
+that do exist are collectible -- a running gateway's counter was read back
+from Prometheus's own API -- but that stack is a local verification run, not
+a deployment, so nothing outside it is actually collecting anything.
 
 All requests should carry correlation identifiers.
 
