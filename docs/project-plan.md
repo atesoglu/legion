@@ -1513,12 +1513,13 @@ Progress within the first half:
 | Counters for the previously silent failures | Built |
 | Latency histograms, end to end and per stage and agent | Built |
 | ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Built |
-| `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Not started |
+| `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Built, verified: a running `gateway` container's counter was read back from Prometheus's own API, and its log line from Elasticsearch |
 | Tracing and correlation identifiers | Not started |
 | Kubernetes manifests, Helm, network policies, KEDA | Deferred (cluster half) |
 
-Nothing collects the signals that are emitted, so no figure from §28's list
-can be reported yet. Zone 3 emits nothing by design (ADR-020).
+The local stack proves the pipeline works end to end; no real deployment runs
+it continuously, so no figure from §28's list can be reported from a live
+system yet. Zone 3 emits nothing by design (ADR-020).
 
 Implement:
 

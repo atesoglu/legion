@@ -3,7 +3,10 @@
 Status: Phase 2 complete; Phase 4's observability half in progress. The
 deterministic decision path described here is implemented and exercised end
 to end, and Phase 2's capability runtime and investigation plane (partially)
-are too. The services now emit metrics, though nothing collects them. Where
+are too. The services emit metrics and logs, and `deploy/observability/`
+now proves both are collected end to end (a real counter in Prometheus, a
+real log line in Kibana) -- but that stack is a local verification run, not
+a deployment, and there is still no tracing and no alerting. Where
 behaviour does not exist yet, it says so; §9 lists what remains.
 
 ## 1. What Legion is
@@ -327,10 +330,13 @@ Directories from the long-term plan that have no implementation purpose yet —
 `infrastructure/`, `security/` — are deliberately absent. Empty directories
 that promise work are worse than no directories.
 
-`deploy/` has arrived, holding what ADR-016 specifies and nothing else:
-`deploy/services.yaml` declares the service set, and `deploy/docker/` holds
-the two parameterised Dockerfiles that build every image from it. Manifests,
-Helm charts and `deploy/observability/` are not there yet, by the same rule.
+`deploy/` holds what ADR-016 and ADR-020 specify and nothing else:
+`deploy/services.yaml` declares the service set, `deploy/docker/` holds the
+two parameterised Dockerfiles that build every image from it, and
+`deploy/observability/` is the Docker Compose verification stack (Collector,
+Prometheus, Grafana, Elasticsearch, Kibana, Filebeat). Kubernetes manifests
+and Helm charts are not there yet, by the same rule -- that is the cluster
+half, deliberately parked.
 
 ## 9. What is not built
 
@@ -454,12 +460,15 @@ silent: lineage and case-trigger drops, dead-lettered investigation tasks,
 capability verdicts, idempotency claim outcomes and circuit-breaker
 transitions. They also emit latency histograms — end-to-end at the gateway,
 and per stage and per agent in the orchestrator — which is the first
-instrumented measurement of ADR-009's budget. **Nothing collects any of it.**
-There is no collector, no Prometheus, no Grafana and no alerting, so a counter
-that moves is still nobody's notification; export is off unless
-`LEGION_OTLP_ENDPOINT` is set, and no deployment sets it. There is no tracing,
-requests carry no correlation identifier beyond the decision id already in
-lineage, and Zone 3 emits nothing by design.
+instrumented measurement of ADR-009's budget. **`deploy/observability/` now
+proves the pipeline works** — Collector, Prometheus, Grafana, Elasticsearch
+and Kibana all run, and a live gateway container's counter was confirmed
+readable from Prometheus's own API and its log line readable from
+Elasticsearch. That is a verification run, not a deployment: nothing outside
+it sets `LEGION_OTLP_ENDPOINT`, no dashboard or alert exists on top of
+Grafana, so a counter that moves is still nobody's notification in practice.
+There is no tracing, requests carry no correlation identifier beyond the
+decision id already in lineage, and Zone 3 emits nothing by design.
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made. One measurement now

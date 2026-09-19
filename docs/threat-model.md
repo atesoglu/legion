@@ -339,7 +339,8 @@ exfiltrate data gathered during a case.
   durable — and ADR-020 does not cover it: an audit record is evidential like
   lineage, not operational like a log, so where it persists is still
   undecided); `legion.capability.checks` counts every verdict, allowed and
-  denied alike, though nothing collects it yet; finding-to-evidence reference
+  denied alike, and `deploy/observability/` proves it is collectible, though
+  no running deployment collects it yet; finding-to-evidence reference
   completeness (a
   finding with no cited evidence is itself a signal); per-agent confidence
   distribution monitored the same way per-agent score distribution is

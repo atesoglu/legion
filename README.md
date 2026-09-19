@@ -19,9 +19,9 @@ them. A `REVIEW` decision now also opens a case and runs it through a mocked
 investigation, capability-checked at every tool call.
 
 Phases 0–2 are complete. Phase 4 has been split: the services now emit metrics
-for the failures that used to be silent and for latency, but nothing collects
-them yet, and the cluster half is deferred. Phases 3, 5, 6 and 7 have not
-started.
+and logs, `deploy/observability/` proves both are collectible (a real counter
+in Prometheus, a real log line in Kibana), and the cluster half is deferred.
+Phases 3, 5, 6 and 7 have not started.
 
 | | |
 |---|---|
@@ -34,7 +34,7 @@ started.
 | Transaction idempotency | Required `idempotency_key`, deduplicated at the gateway (ADR-019) |
 | Capability runtime | Full enforcement pipeline (identity, grant, scope, constraint, budget; ADR-005) against a static manifest; one real caller (`investigation/worker`); no caller yet on the fixed-enum path (deterministic agents are push-style, behavioural agent doesn't exist) |
 | Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017), every tool call checked by the capability runtime; `RegisterAgent` API and real tool/model calls not implemented |
-| Observability | **Partly built** (ADR-020): the Go services emit counters for the previously silent failures — lineage and case-trigger drops, dead-lettered tasks, capability verdicts, dedup outcomes, breaker transitions — and latency histograms end-to-end, per stage and per agent, with ADR-009's 80 ms deadline as an explicit bucket boundary. Nothing collects any of it: no collector, Prometheus, Grafana, Elasticsearch or alerting exists yet, export is off unless `LEGION_OTLP_ENDPOINT` is set, and there is no tracing. Zone 3 emits nothing by design |
+| Observability | **Partly built** (ADR-020): the Go services emit counters for the previously silent failures — lineage and case-trigger drops, dead-lettered tasks, capability verdicts, dedup outcomes, breaker transitions — and latency histograms end-to-end, per stage and per agent, with ADR-009's 80 ms deadline as an explicit bucket boundary. `deploy/observability/` (Collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat) is built and was verified against a live `gateway` container — but that is a local run, not a deployment: nothing outside it sets `LEGION_OTLP_ENDPOINT`, there is no dashboard or alerting, and there is no tracing. Zone 3 emits nothing by design |
 | Behavioural agent, Kubernetes, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
@@ -182,7 +182,7 @@ Restructured 2026-09-16 to fold in an investigation/case-management scope
 | 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
 | 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | **Complete** — transaction idempotency (ADR-019), the investigation plane's case/task/worker loop (ADR-017, two seeded agents) and the capability runtime (ADR-005) all shipped. Known gaps carried into later phases: no `RegisterAgent` API, no mTLS/workload identity (still the Phase 1 shared-key/caller-asserted stand-in), no durable capability audit storage, and every investigation agent's tool/model call is mocked pending Phase 3's shared inference runtime |
 | 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
-| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | **In progress, split in two.** Built: the OpenTelemetry pipeline in the shared process lifecycle, counters for the previously silent failures, and latency histograms. Not built: packaging (ADR-016), the collector/Prometheus/Grafana/Elasticsearch stack, tracing and correlation identifiers — so nothing collects what is emitted. The cluster half — manifests, Helm, network policies, KEDA — and ADR-011's mTLS are deferred, since neither can be verified without a cluster |
+| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | **In progress, split in two.** Built: the OpenTelemetry pipeline in the shared process lifecycle, counters for the previously silent failures, latency histograms, ADR-016 packaging, and `deploy/observability/` (verified: a live gateway container's counter read back from Prometheus, its log line from Elasticsearch). Not built: tracing and correlation identifiers, and any dashboard or alerting on top of Grafana. The cluster half — manifests, Helm, network policies, KEDA — and ADR-011's mTLS are deferred, since neither can be verified without a cluster |
 | 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |
 | 6 | Failure injection, adversarial scenarios, resilience measurement — decision path and investigation path | Not started |
 | 7 | Benchmarks, cost-per-investigation, results, portfolio release | Not started |

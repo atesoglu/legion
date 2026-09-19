@@ -1,0 +1,23 @@
+# ADR-020: log emission is unchanged -- stdout -- and Filebeat is what reads
+# it. No Logstash: there is nothing to transform, every Legion log line is
+# already structured JSON from internal/platform/runtime's slog handler.
+filebeat.autodiscover:
+  providers:
+    - type: docker
+      hints.enabled: true
+
+processors:
+  - add_docker_metadata:
+      host: "unix:///var/run/docker.sock"
+
+output.elasticsearch:
+  hosts: ["https://elasticsearch:9200"]
+  username: "filebeat_internal"
+  password: "${FILEBEAT_PASSWORD}"
+  ssl.certificate_authorities: ["/usr/share/filebeat/certs/ca/ca.crt"]
+
+setup.kibana:
+  host: "http://kibana:5601"
+
+setup.ilm.enabled: true
+setup.template.enabled: true

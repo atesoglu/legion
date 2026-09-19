@@ -146,8 +146,9 @@ target is stated for, plus `legion.evaluation.duration`,
 `legion.evaluation.stage.duration` and `legion.agent.duration` in the
 orchestrator — with 0.08 seconds as an explicit bucket boundary, so "what
 fraction finished inside the budget" is a bucket count rather than an
-interpolation across one. **Nothing collects them**, so none of the figures
-above can be reported yet.
+interpolation across one. `deploy/observability/` proves the pipeline reaches
+Prometheus, but no measurement run has been taken through it, so none of the
+figures above can be reported yet from this path -- only from lineage (§7).
 
 The stage numbers also have a second, older source —
 `DecisionLineage.ExecutionSpan` has recorded the elapsed time and the budget

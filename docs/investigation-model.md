@@ -262,9 +262,9 @@ destroys a metric store; "which agent is dead-lettering" is a per-entity
 question and is answered from the `tasks` table.
 
 Everything else is unbuilt: no correlation identifiers on investigation-path
-requests, no queue-depth, tool or LLM metrics, no cost recording of any kind,
-and no collector or store to send any of it to. Nothing collects even the
-one counter that exists.
+requests, no queue-depth, tool or LLM metrics, no cost recording of any kind.
+`deploy/observability/` (Tier 1 step 5) proves the one counter that exists
+can reach a collector and Prometheus; no running deployment does that today.
 
 ## 9. Testing
 

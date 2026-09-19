@@ -1,0 +1,24 @@
+# ADR-020: services push OTLP to this collector; the collector is the only
+# component that knows where a backend lives (services never do). Today it
+# only forwards metrics -- traces arrive in Tier 1 step 6.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+exporters:
+  # Prometheus is pull-only (ADR-020): this is the one target Prometheus
+  # scrapes, not a push destination.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+
+processors:
+  batch: {}
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus]
