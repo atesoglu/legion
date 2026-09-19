@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/atesoglu/legion/internal/platform/observability"
 )
 
 // payloadField is the single field a message carries: an opaque,
@@ -44,11 +46,17 @@ func (s *Stream) EnsureGroup(ctx context.Context) error {
 	return nil
 }
 
-// Publish appends payload to the stream.
+// Publish appends payload to the stream, alongside the calling trace's
+// propagation fields (ADR-020: trace context propagates across the Redis
+// Streams queue hops), so a consumer can continue the same trace.
 func (s *Stream) Publish(ctx context.Context, payload []byte) error {
+	values := map[string]any{payloadField: string(payload)}
+	for key, value := range observability.InjectFields(ctx) {
+		values[key] = value
+	}
 	err := s.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: s.name,
-		Values: map[string]any{payloadField: string(payload)},
+		Values: values,
 	}).Err()
 	if err != nil {
 		return fmt.Errorf("queue: publish to %q: %w", s.name, err)
@@ -60,6 +68,11 @@ func (s *Stream) Publish(ctx context.Context, payload []byte) error {
 type Message struct {
 	ID      string
 	Payload []byte
+
+	// Fields carries every field on the entry other than the payload -- in
+	// practice the trace-propagation fields Publish added, if any. Pass to
+	// observability.ExtractContext to continue the producer's trace.
+	Fields map[string]string
 }
 
 // Read claims up to count new messages for consumer, blocking up to block
@@ -128,7 +141,19 @@ func messagesFromSlice(raw []redis.XMessage) []Message {
 		if !ok {
 			continue
 		}
-		out = append(out, Message{ID: m.ID, Payload: []byte(str)})
+		message := Message{ID: m.ID, Payload: []byte(str)}
+		for key, raw := range m.Values {
+			if key == payloadField {
+				continue
+			}
+			if s, ok := raw.(string); ok {
+				if message.Fields == nil {
+					message.Fields = make(map[string]string, len(m.Values)-1)
+				}
+				message.Fields[key] = s
+			}
+		}
+		out = append(out, message)
 	}
 	return out
 }

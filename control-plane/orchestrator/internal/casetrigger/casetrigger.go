@@ -45,14 +45,25 @@ const writeTimeout = 5 * time.Second
 
 // Publisher enqueues a CaseTrigger for background publication.
 type Publisher interface {
-	Publish(trigger *investigationv1.CaseTrigger)
+	Publish(ctx context.Context, trigger *investigationv1.CaseTrigger)
 	Close()
+}
+
+// pending is a trigger together with the trace-propagation fields captured at
+// enqueue time (ADR-020: trace context propagates across the Redis Streams
+// queue hops). They must be captured synchronously, in the caller's own
+// context, because by the time the background publisher runs, the request
+// that produced them has already returned to its own caller and its context
+// may be cancelled.
+type pending struct {
+	trigger     *investigationv1.CaseTrigger
+	traceFields map[string]string
 }
 
 // RedisPublisher is the Publisher used in every deployment.
 type RedisPublisher struct {
 	client redis.Cmdable
-	queue  chan *investigationv1.CaseTrigger
+	queue  chan pending
 	done   chan struct{}
 	log    *slog.Logger
 }
@@ -62,7 +73,7 @@ type RedisPublisher struct {
 func New(client redis.Cmdable, log *slog.Logger) *RedisPublisher {
 	p := &RedisPublisher{
 		client: client,
-		queue:  make(chan *investigationv1.CaseTrigger, queueDepth),
+		queue:  make(chan pending, queueDepth),
 		done:   make(chan struct{}),
 		log:    log,
 	}
@@ -71,13 +82,14 @@ func New(client redis.Cmdable, log *slog.Logger) *RedisPublisher {
 }
 
 func (p *RedisPublisher) run() {
-	for trigger := range p.queue {
-		p.publish(trigger)
+	for item := range p.queue {
+		p.publish(item)
 	}
 	close(p.done)
 }
 
-func (p *RedisPublisher) publish(trigger *investigationv1.CaseTrigger) {
+func (p *RedisPublisher) publish(item pending) {
+	trigger := item.trigger
 	payload, err := proto.Marshal(trigger)
 	if err != nil {
 		p.log.Warn("case trigger could not be serialised", "decision_id", trigger.GetDecisionId(), "error", err)
@@ -87,9 +99,14 @@ func (p *RedisPublisher) publish(trigger *investigationv1.CaseTrigger) {
 	ctx, cancel := context.WithTimeout(context.Background(), writeTimeout)
 	defer cancel()
 
+	values := map[string]any{"payload": string(payload)}
+	for key, value := range item.traceFields {
+		values[key] = value
+	}
+
 	err = p.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: streamName,
-		Values: map[string]any{"payload": string(payload)},
+		Values: values,
 	}).Err()
 	if err != nil {
 		p.log.Warn("case trigger publish failed", "decision_id", trigger.GetDecisionId(), "error", err)
@@ -100,9 +117,14 @@ func (p *RedisPublisher) publish(trigger *investigationv1.CaseTrigger) {
 }
 
 // Publish enqueues trigger. See Publisher.
-func (p *RedisPublisher) Publish(trigger *investigationv1.CaseTrigger) {
+//
+// ctx's trace context is captured now, not read later: the background
+// publisher runs after the request that produced trigger has already
+// returned, by which point ctx may be cancelled.
+func (p *RedisPublisher) Publish(ctx context.Context, trigger *investigationv1.CaseTrigger) {
+	item := pending{trigger: trigger, traceFields: observability.InjectFields(ctx)}
 	select {
-	case p.queue <- trigger:
+	case p.queue <- item:
 	default:
 		p.log.Warn("case trigger queue full; dropping trigger", "decision_id", trigger.GetDecisionId())
 		publications.Inc(context.Background(), observability.Outcome("dropped"))

@@ -26,6 +26,8 @@ services:
           echo "Set KIBANA_PASSWORD in .env"; exit 1;
         elif [ x${FILEBEAT_PASSWORD} == x ]; then
           echo "Set FILEBEAT_PASSWORD in .env"; exit 1;
+        elif [ x${OTEL_ES_PASSWORD} == x ]; then
+          echo "Set OTEL_ES_PASSWORD in .env"; exit 1;
         fi;
         if [ ! -f config/certs/ca.zip ]; then
           echo "Creating CA";
@@ -66,7 +68,17 @@ services:
         until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" \
           -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/filebeat_internal \
           -d "{\"password\":\"${FILEBEAT_PASSWORD}\",\"roles\":[\"filebeat_writer\"]}" \
-          | grep -q "\"created\":true"; do sleep 5; done;
+          | grep -q "\"created\""; do sleep 5; done;
+        echo "Creating otelcollector_writer role (traces only, least privilege)";
+        until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" https://elasticsearch:9200/_security/role/otelcollector_writer \
+          -d "{\"cluster\":[\"monitor\",\"manage_ilm\",\"manage_index_templates\"],\"indices\":[{\"names\":[\"traces-*\"],\"privileges\":[\"create_index\",\"create_doc\",\"manage\",\"monitor\"]}]}" \
+          | grep -q "\"created\""; do sleep 5; done;
+        echo "Creating otelcollector_internal user";
+        until curl -s -X POST --cacert config/certs/ca/ca.crt -u "elastic:${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" https://elasticsearch:9200/_security/user/otelcollector_internal \
+          -d "{\"password\":\"${OTEL_ES_PASSWORD}\",\"roles\":[\"otelcollector_writer\"]}" \
+          | grep -q "\"created\""; do sleep 5; done;
         echo "All done!";
       '
     healthcheck:
@@ -161,10 +173,19 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 
   otel-collector:
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
     image: otel/opentelemetry-collector-contrib:0.116.1
     command: ["--config=/etc/otel-collector-config.yaml"]
+    environment:
+      - OTEL_ES_PASSWORD=${OTEL_ES_PASSWORD}
     volumes:
       - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+      # Read-only, and only the CA: the collector is a client to
+      # Elasticsearch (verifying its certificate), never a server, so it
+      # needs no certificate/key pair of its own.
+      - certs:/usr/share/otel-collector/certs:ro
     ports:
       - "127.0.0.1:4317:4317"
       - "127.0.0.1:8889:8889"

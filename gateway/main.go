@@ -196,6 +196,7 @@ func main() {
 	conn, err := grpc.NewClient(
 		envOr("LEGION_ORCHESTRATOR_ENDPOINT", defaultOrchestratorAddress),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(observability.UnaryClientInterceptor()),
 	)
 	if err != nil {
 		log.Error("orchestrator endpoint is not dialable", "error", err)
@@ -228,7 +229,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(observability.UnaryServerInterceptor()))
 	gatewayv1.RegisterDecisionServiceServer(grpcServer, &server{
 		authenticator: authenticator,
 		limiter:       limiter,

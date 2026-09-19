@@ -209,7 +209,7 @@ func taskPayload(t *testing.T, taskID string) []byte {
 }
 
 func handle(st taskStore, capability agentv1.CapabilityRuntimeServiceClient, payload []byte) disposition {
-	return handleTask(context.Background(), st, capability, payload, testLogger())
+	return handleTask(context.Background(), st, capability, queue.Message{Payload: payload}, testLogger())
 }
 
 func TestACorruptEnvelopeIsSettledRatherThanRedelivered(t *testing.T) {

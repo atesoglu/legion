@@ -38,6 +38,7 @@ import (
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/lineage"
 	"github.com/atesoglu/legion/control-plane/orchestrator/internal/registry"
 	"github.com/atesoglu/legion/internal/platform/config"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 	dataplanev1 "github.com/atesoglu/legion/protocol/gen/go/legion/dataplane/v1"
@@ -212,7 +213,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(observability.UnaryServerInterceptor()))
 	gatewayv1.RegisterDecisionServiceServer(grpcServer, &server{coordinator: coordinator})
 
 	warm(conns, log)
@@ -270,7 +271,10 @@ func dialAgents(agents *registry.Registry) (map[string]evaluation.AgentClient, [
 
 // Transport security is Phase 4 work: mTLS with workload identity (ADR-011).
 func dial(endpoint string) (*grpc.ClientConn, error) {
-	return grpc.NewClient(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	return grpc.NewClient(endpoint,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(observability.UnaryClientInterceptor()),
+	)
 }
 
 func closeAll(conns []*grpc.ClientConn, log *slog.Logger) {

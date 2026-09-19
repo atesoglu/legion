@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
@@ -111,6 +112,7 @@ func main() {
 	capabilityConn, err := grpc.NewClient(
 		envOr("LEGION_CAPABILITY_RUNTIME", defaultCapabilityRuntimeEndpoint),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(observability.UnaryClientInterceptor()),
 	)
 	if err != nil {
 		log.Error("capability runtime endpoint is not dialable", "error", err)
@@ -222,7 +224,7 @@ func runLoop(
 		}
 
 		for _, message := range messages {
-			if handleTask(ctx, st, capability, message.Payload, log) == retry {
+			if handleTask(ctx, st, capability, message, log) == retry {
 				log.Warn("task left unacknowledged for redelivery", "message_id", message.ID)
 				continue
 			}
@@ -238,24 +240,34 @@ func runLoop(
 // same task_id (at-least-once delivery, ADR-017 section 3): a task already in
 // a terminal state runs no agent a second time.
 func handleTask(
-	ctx context.Context, st taskStore, capability agentv1.CapabilityRuntimeServiceClient, payload []byte, log *slog.Logger,
+	ctx context.Context, st taskStore, capability agentv1.CapabilityRuntimeServiceClient, message queue.Message, log *slog.Logger,
 ) disposition {
+	// Continues the decision's own trace (ADR-020), propagated from the
+	// controller when it created this task.
+	ctx = observability.ExtractContext(ctx, message.Fields)
+	ctx, span := observability.StartConsumerSpan(ctx, "investigation.task_execution")
+	defer span.End()
+
 	envelope := &investigationv1.Task{}
-	if err := proto.Unmarshal(payload, envelope); err != nil {
+	if err := proto.Unmarshal(message.Payload, envelope); err != nil {
 		// Redelivery cannot turn an unparseable payload into a parseable one.
 		log.Warn("task envelope is corrupt; dropping", "error", err)
+		observability.RecordOutcome(span, err)
 		return settled
 	}
+	span.SetAttributes(attribute.String("legion.task_id", envelope.GetTaskId()))
 
 	task, err := st.GetTask(ctx, envelope.GetTaskId())
 	if err != nil {
 		log.Warn("task lookup failed", "task_id", envelope.GetTaskId(), "error", err)
+		observability.RecordOutcome(span, err)
 		return retry
 	}
 	if task == nil {
 		log.Warn("task envelope refers to no known task", "task_id", envelope.GetTaskId())
 		return settled
 	}
+	span.SetAttributes(attribute.String("legion.agent_id", task.AgentID))
 	if store.IsTerminal(task.Status) {
 		// The agent already ran under a previous delivery, but that delivery
 		// may have died before closing the investigation out, so the
@@ -269,12 +281,14 @@ func handleTask(
 	attempt, err := st.ClaimTask(ctx, task.TaskID)
 	if err != nil {
 		log.Warn("task claim failed", "task_id", task.TaskID, "error", err)
+		observability.RecordOutcome(span, err)
 		return retry
 	}
 
 	agent, err := st.GetEnabledAgent(ctx, task.AgentID)
 	if err != nil {
 		log.Warn("agent lookup failed", "task_id", task.TaskID, "agent_id", task.AgentID, "error", err)
+		observability.RecordOutcome(span, err)
 		return failTask(ctx, st, task, transientStatus(attempt, task.MaxAttempts), log)
 	}
 	if agent == nil {
@@ -285,6 +299,7 @@ func handleTask(
 
 	if err := runAgent(ctx, st, capability, task, agent, log); err != nil {
 		log.Warn("agent execution failed", "task_id", task.TaskID, "agent_id", agent.AgentID, "error", err)
+		observability.RecordOutcome(span, err)
 		if errors.Is(err, errCapabilityDenied) {
 			// A capability denial is a policy decision, not a transient
 			// fault: asking the same broker the same question again gets the
@@ -301,6 +316,7 @@ func handleTask(
 		// accept that the mocked agent may run twice — at-least-once is the
 		// contract, and task.max_attempts bounds it.
 		log.Warn("task completion failed", "task_id", task.TaskID, "error", err)
+		observability.RecordOutcome(span, err)
 		return retry
 	}
 	taskOutcomes.Inc(ctx, observability.Outcome("completed"))

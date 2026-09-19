@@ -21,6 +21,7 @@ import (
 
 	"github.com/atesoglu/legion/control-plane/capability/internal/broker"
 	"github.com/atesoglu/legion/internal/platform/config"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	agentv1 "github.com/atesoglu/legion/protocol/gen/go/legion/agent/v1"
 )
@@ -96,7 +97,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(observability.UnaryServerInterceptor()))
 	agentv1.RegisterCapabilityRuntimeServiceServer(grpcServer, &server{broker: b})
 
 	err = runtime.Serve(cfg, log,

@@ -1,12 +1,13 @@
 # Architecture
 
-Status: Phase 2 complete; Phase 4's observability half in progress. The
+Status: Phase 2 complete; Phase 4's observability half nearly done. The
 deterministic decision path described here is implemented and exercised end
 to end, and Phase 2's capability runtime and investigation plane (partially)
-are too. The services emit metrics and logs, and `deploy/observability/`
-now proves both are collected end to end (a real counter in Prometheus, a
-real log line in Kibana) -- but that stack is a local verification run, not
-a deployment, and there is still no tracing and no alerting. Where
+are too. The services emit metrics, logs and traces, and
+`deploy/observability/` proves all three are collected end to end (a real
+counter in Prometheus, a real log line in Kibana, a real trace with its
+error status in Elasticsearch) -- but that stack is a local verification
+run, not a deployment, and there is still no dashboard or alerting. Where
 behaviour does not exist yet, it says so; §9 lists what remains.
 
 ## 1. What Legion is
@@ -474,8 +475,30 @@ readable from Prometheus's own API and its log line readable from
 Elasticsearch. That is a verification run, not a deployment: nothing outside
 it sets `LEGION_OTLP_ENDPOINT`, no dashboard or alert exists on top of
 Grafana, so a counter that moves is still nobody's notification in practice.
-There is no tracing, requests carry no correlation identifier beyond the
-decision id already in lineage, and Zone 3 emits nothing by design.
+
+**Tracing is built too**: gRPC unary interceptors (gateway, orchestrator,
+capability, and the investigation worker's capability client) start a span
+per call and propagate its context as ordinary gRPC metadata; the
+investigation plane's Redis Streams hops (casetrigger, and the task queue
+both controller and worker use) carry the same context as extra fields
+alongside the payload, so a case can be followed from the decision that
+opened it to the task that closed it -- the property ADR-020 asked for.
+Sampling is asymmetric per ADR-020 but decided centrally, not per process:
+every service exports every span (`AlwaysSample`), and the collector's
+`tail_sampling` processor keeps a trace if any span in it errored, at a flat
+10% rate otherwise, or unconditionally if it is an investigation-path
+service. A live single-hop trace (one rejected gateway call, its span
+carrying an error status) was confirmed landing in Elasticsearch through
+that exact pipeline. What that local run does NOT exercise is a live
+multi-hop trace across gateway, orchestrator and the investigation plane
+together -- context continuity across a gRPC hop and across a Redis Streams
+hop are each proven by a unit test that fails if the propagation code is
+removed, not by an end-to-end run. The slog `trace_id`/`span_id` fields have
+existed since step 1 and are finally populated for any log line recorded
+with a span in its context.
+
+Still missing: a dashboard or any alerting on top of Grafana or Kibana, and
+Zone 3 emits nothing by design.
 
 No latency, throughput or detection-quality claim in this repository is
 currently supported by measurement, and none is made. One measurement now

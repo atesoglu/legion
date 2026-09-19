@@ -63,7 +63,7 @@ type LineageStore interface {
 // case creation, never the decision. See
 // control-plane/orchestrator/internal/casetrigger.
 type CaseTriggerPublisher interface {
-	Publish(trigger *investigationv1.CaseTrigger)
+	Publish(ctx context.Context, trigger *investigationv1.CaseTrigger)
 }
 
 // Coordinator runs evaluations against a configured agent set.
@@ -284,7 +284,7 @@ func (c *Coordinator) Evaluate(
 	// recorded and never acted upon, and dispatching investigation agents to
 	// an analyst-visible case is acting upon it.
 	if outcome.GetDecision() == riskv1.Decision_DECISION_REVIEW && !req.Shadow {
-		c.caseTriggers.Publish(&investigationv1.CaseTrigger{
+		c.caseTriggers.Publish(ctx, &investigationv1.CaseTrigger{
 			DecisionId:     evaluationID,
 			TransactionId:  subject.GetId(),
 			Outcome:        outcome,

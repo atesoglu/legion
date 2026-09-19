@@ -261,10 +261,17 @@ because §6 anticipates thousands of logical agents and an unbounded label
 destroys a metric store; "which agent is dead-lettering" is a per-entity
 question and is answered from the `tasks` table.
 
-Everything else is unbuilt: no correlation identifiers on investigation-path
-requests, no queue-depth, tool or LLM metrics, no cost recording of any kind.
-`deploy/observability/` (Tier 1 step 5) proves the one counter that exists
-can reach a collector and Prometheus; no running deployment does that today.
+Everything else is unbuilt: no queue-depth, tool or LLM metrics, no cost
+recording of any kind. `deploy/observability/` (Tier 1 step 5) proves the one
+counter that exists can reach a collector and Prometheus; no running
+deployment does that today.
+
+Correlation IDENTIFIERS are built, which this section previously said were
+not: a case trigger and every task it spawns carry the originating decision's
+trace context as extra fields alongside their Redis Streams payload, so the
+same `trace_id` spans the decision, the case, and every task -- exactly the
+"case trigger to finding" chain ADR-020 asked for. Not the same thing as
+queue-depth or LLM metrics above, which remain unbuilt.
 
 ## 9. Testing
 

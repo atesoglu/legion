@@ -34,7 +34,7 @@ func TestPublishAppendsToTheTriggerStream(t *testing.T) {
 		Outcome:        &riskv1.DecisionOutcome{Decision: riskv1.Decision_DECISION_REVIEW},
 		IdempotencyKey: "key-1",
 	}
-	publisher.Publish(trigger)
+	publisher.Publish(context.Background(), trigger)
 
 	deadline := time.Now().Add(time.Second)
 	for {

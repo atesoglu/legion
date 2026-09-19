@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/atesoglu/legion/internal/platform/config"
+	"github.com/atesoglu/legion/internal/platform/observability"
 	"github.com/atesoglu/legion/internal/platform/runtime"
 	"github.com/atesoglu/legion/investigation/internal/queue"
 	"github.com/atesoglu/legion/investigation/internal/store"
@@ -183,7 +184,7 @@ func runLoop(stop <-chan struct{}, triggers, tasks *queue.Stream, st *store.Stor
 			continue
 		}
 		for _, message := range messages {
-			handleTrigger(ctx, st, tasks, message.Payload, log)
+			handleTrigger(ctx, st, tasks, message, log)
 			if err := triggers.Ack(ctx, message.ID); err != nil {
 				log.Warn("trigger ack failed", "id", message.ID, "error", err)
 			}
@@ -195,10 +196,17 @@ func runLoop(stop <-chan struct{}, triggers, tasks *queue.Stream, st *store.Stor
 // silently confirms an already-created one: the queue's at-least-once
 // delivery (ADR-017 section 3) means the same trigger may be handled more
 // than once, and it must never open two cases for one transaction.
-func handleTrigger(ctx context.Context, st *store.Store, tasks *queue.Stream, payload []byte, log *slog.Logger) {
+func handleTrigger(ctx context.Context, st *store.Store, tasks *queue.Stream, message queue.Message, log *slog.Logger) {
+	// Continues the decision's own trace (ADR-020), captured on the
+	// orchestrator side when the trigger was published.
+	ctx = observability.ExtractContext(ctx, message.Fields)
+	ctx, span := observability.StartConsumerSpan(ctx, "investigation.case_trigger")
+	defer span.End()
+
 	trigger := &investigationv1.CaseTrigger{}
-	if err := proto.Unmarshal(payload, trigger); err != nil {
+	if err := proto.Unmarshal(message.Payload, trigger); err != nil {
 		log.Warn("case trigger is corrupt; dropping", "error", err)
+		observability.RecordOutcome(span, err)
 		return
 	}
 
@@ -209,6 +217,7 @@ func handleTrigger(ctx context.Context, st *store.Store, tasks *queue.Stream, pa
 	})
 	if err != nil {
 		log.Warn("case creation failed", "decision_id", trigger.GetDecisionId(), "error", err)
+		observability.RecordOutcome(span, err)
 		return
 	}
 	if !created {

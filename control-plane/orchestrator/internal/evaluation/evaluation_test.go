@@ -129,7 +129,7 @@ type fakeCaseTriggerPublisher struct {
 	published []*investigationv1.CaseTrigger
 }
 
-func (f *fakeCaseTriggerPublisher) Publish(trigger *investigationv1.CaseTrigger) {
+func (f *fakeCaseTriggerPublisher) Publish(_ context.Context, trigger *investigationv1.CaseTrigger) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.published = append(f.published, trigger)

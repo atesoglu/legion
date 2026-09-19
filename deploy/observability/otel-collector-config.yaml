@@ -1,6 +1,8 @@
 # ADR-020: services push OTLP to this collector; the collector is the only
-# component that knows where a backend lives (services never do). Today it
-# only forwards metrics -- traces arrive in Tier 1 step 6.
+# component that knows where a backend lives (services never do). It
+# forwards metrics to Prometheus's exposition endpoint and traces to
+# Elasticsearch. Logs bypass the collector entirely -- they leave a
+# container as stdout and Filebeat ships them directly.
 receivers:
   otlp:
     protocols:
@@ -13,8 +15,46 @@ exporters:
   prometheus:
     endpoint: 0.0.0.0:8889
 
+  # A dedicated, least-privilege ES user (see deploy/observability/README.md
+  # and the setup service in docker-compose.yml) -- not the elastic
+  # superuser, same posture as filebeat_internal.
+  elasticsearch:
+    endpoint: https://elasticsearch:9200
+    user: otelcollector_internal
+    password: ${env:OTEL_ES_PASSWORD}
+    tls:
+      ca_file: /usr/share/otel-collector/certs/ca/ca.crt
+
 processors:
   batch: {}
+
+  # ADR-020's asymmetric sampling, decided centrally here because this is the
+  # only place a whole trace is visible at once (Legion services all export
+  # AlwaysSample -- see internal/platform/observability -- so every span
+  # reaches this processor, and it does the actual keep/drop). Policies are
+  # OR'd: a trace is kept if ANY policy matches.
+  tail_sampling:
+    decision_wait: 10s
+    policies:
+      # Decision path (Zones 1-3): errors always sampled...
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      # ...the rest sampled at a flat rate. Applies to every service, but is
+      # redundant (never the deciding vote) for investigation-path traces
+      # because the policy below already keeps 100% of those.
+      - name: decision-path-sample
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 10
+      # Investigation path (Zone 6): sampled at 100%, matched by service
+      # name since it is the async, low-volume, no-lineage-equivalent path.
+      - name: investigation-path-full
+        type: string_attribute
+        string_attribute:
+          key: service.name
+          values: ["investigation-controller", "investigation-worker"]
 
 service:
   pipelines:
@@ -22,3 +62,7 @@ service:
       receivers: [otlp]
       processors: [batch]
       exporters: [prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [elasticsearch]

@@ -1070,16 +1070,29 @@ now instrumented (`legion.decision.duration` end to end at the gateway, plus
 per-stage and per-agent histograms in the orchestrator, with ADR-009's 80 ms
 deadline as an explicit bucket boundary). Fallback rate, model timeout and
 error rates, feature-lookup latency, queue depth, CPU and memory are not.
-The OpenTelemetry span tree below does not exist at all: there is no tracing,
-and correlation identifiers are not yet attached to requests.
-`deploy/observability/` (§28's build-order table above) proves the metrics
-that do exist are collectible -- a running gateway's counter was read back
-from Prometheus's own API -- but that stack is a local verification run, not
-a deployment, so nothing outside it is actually collecting anything.
+The OpenTelemetry span tree below is now built for the decision path and the
+Redis Streams hops it crosses into the investigation plane: gRPC unary
+interceptors start and propagate spans, casetrigger and the task queue carry
+the same context as extra fields, and every service exports every span
+(`AlwaysSample`) -- sampling is decided centrally by the collector's
+`tail_sampling` processor (errors always kept, 10% of the rest, 100% of the
+investigation path), not per process. Correlation identifiers are the span's
+own `trace_id`/`span_id`, attached to log lines via the slog handler that has
+existed since step 1. `deploy/observability/` (§28's build-order table above)
+proves a live trace -- one gateway span, its error status intact -- reaches
+Elasticsearch through that exact pipeline. What that local run does not
+exercise is a live multi-hop trace across services together; gRPC and Redis
+Streams context continuity are each proven by a unit test instead.
 
 All requests should carry correlation identifiers.
 
-OpenTelemetry should provide:
+OpenTelemetry should provide (unchanged aspirational list; what actually
+exists today is a gRPC client span per outbound call, not this exact tree --
+"Feature Store span" has no separate span of its own, for instance, since the
+feature fetch happens inside the orchestrator's own server span rather than
+over gRPC; "Rust Engine span" is real, one client span per agent call; the
+behavioral agent, inference and aggregation spans await Phase 3, which is
+when those calls first exist to have a span at all):
 
 ```text
 Transaction
@@ -1517,7 +1530,7 @@ Progress within the first half:
 | Latency histograms, end to end and per stage and agent | Built |
 | ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Built |
 | `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Built, verified: a running `gateway` container's counter was read back from Prometheus's own API, and its log line from Elasticsearch |
-| Tracing and correlation identifiers | Not started |
+| Tracing and correlation identifiers | Built, verified for one hop: gRPC interceptors and Redis Streams field propagation carry a trace across the decision and investigation planes; a live single-hop trace (error status included) was read back from Elasticsearch through the collector's `tail_sampling` processor. Multi-hop continuity is unit-tested, not exercised live |
 | Kubernetes manifests, Helm, network policies, KEDA | Deferred (cluster half) |
 
 The local stack proves the pipeline works end to end; no real deployment runs

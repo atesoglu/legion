@@ -17,18 +17,23 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/metric/noop"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 const (
@@ -54,31 +59,35 @@ type Config struct {
 	Endpoint string
 }
 
-// Provider owns a service's metric pipeline and its shutdown.
+// Provider owns a service's metric and trace pipelines and their shutdown.
 type Provider struct {
-	meterProvider metric.MeterProvider
-	shutdown      func(context.Context) error
+	meterProvider  metric.MeterProvider
+	tracerProvider trace.TracerProvider
+	shutdown       func(context.Context) error
 }
 
 // Start builds the pipeline and installs it as the global provider.
 //
-// An empty Endpoint yields a no-op provider rather than an error. Metrics must
+// An empty Endpoint yields no-op providers rather than an error. Telemetry must
 // never be a startup dependency: a developer running one service, and the e2e
 // suite running all of them, must not need a collector to exist, and an
-// instrument that records into a no-op provider costs nothing.
+// instrument or span that records into a no-op provider costs nothing.
 //
 // Installing globally is deliberate, and is the one place this repository
 // prefers global state to an explicit dependency. Instrumentation is
-// cross-cutting: threading a meter provider into every constructor would make
-// each one take an argument it has no conceptual need for, which is a worse
-// trade than one process-wide provider set once at startup.
+// cross-cutting: threading a meter or tracer provider into every constructor
+// would make each one take an argument it has no conceptual need for, which is
+// a worse trade than one process-wide provider set once at startup.
 func Start(ctx context.Context, cfg Config) (*Provider, error) {
 	if cfg.Endpoint == "" {
-		provider := noop.NewMeterProvider()
-		otel.SetMeterProvider(provider)
+		meterProvider := noop.NewMeterProvider()
+		tracerProvider := tracenoop.NewTracerProvider()
+		otel.SetMeterProvider(meterProvider)
+		otel.SetTracerProvider(tracerProvider)
 		return &Provider{
-			meterProvider: provider,
-			shutdown:      func(context.Context) error { return nil },
+			meterProvider:  meterProvider,
+			tracerProvider: tracerProvider,
+			shutdown:       func(context.Context) error { return nil },
 		}, nil
 	}
 
@@ -109,21 +118,56 @@ func Start(ctx context.Context, cfg Config) (*Provider, error) {
 		return nil, fmt.Errorf("observability: resource: %w", err)
 	}
 
-	provider := sdkmetric.NewMeterProvider(
+	meterProvider := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter,
 			sdkmetric.WithInterval(exportInterval),
 			sdkmetric.WithTimeout(exportTimeout),
 		)),
 	)
-	otel.SetMeterProvider(provider)
+	otel.SetMeterProvider(meterProvider)
 
-	return &Provider{meterProvider: provider, shutdown: provider.Shutdown}, nil
+	traceExporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(cfg.Endpoint),
+		otlptracegrpc.WithInsecure(),
+		otlptracegrpc.WithTimeout(exportTimeout),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("observability: OTLP trace exporter: %w", err)
+	}
+
+	// Every span this process creates is exported: AlwaysSample, not a ratio.
+	// ADR-020's asymmetric sampling (decision path sampled with errors always
+	// sampled; investigation path 100%) is decided centrally in the
+	// collector's tail_sampling processor instead of here, because that is
+	// the only place a whole trace is visible at once -- a per-process head
+	// sampler would have to decide before knowing whether anything in the
+	// trace will error. Batching and a bounded queue (WithBatcher's defaults)
+	// keep this off the decision path exactly like the metric reader above.
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithResource(res),
+		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	otel.SetTracerProvider(tracerProvider)
+
+	return &Provider{
+		meterProvider:  meterProvider,
+		tracerProvider: tracerProvider,
+		shutdown: func(shutdownCtx context.Context) error {
+			return errors.Join(meterProvider.Shutdown(shutdownCtx), tracerProvider.Shutdown(shutdownCtx))
+		},
+	}, nil
 }
 
 // Meter returns a named meter from this provider.
 func (p *Provider) Meter(name string) metric.Meter {
 	return p.meterProvider.Meter(name)
+}
+
+// Tracer returns a named tracer from this provider.
+func (p *Provider) Tracer(name string) trace.Tracer {
+	return p.tracerProvider.Tracer(name)
 }
 
 // Shutdown flushes anything pending and releases the exporter. It is safe to
