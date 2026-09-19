@@ -1,0 +1,32 @@
+{{/*
+KEDA ScaledObject for investigation-worker (project-plan.md section 50:
+"worker autoscaling on investigation queue depth"). Requires KEDA's own
+operator and CRDs installed separately (helm install keda kedacore/keda -n
+keda) -- this chart does not install KEDA itself, the same way it does not
+install Calico: platform infrastructure is provisioned once, independent of
+an application release.
+
+pendingEntriesCount is XPENDING against the "workers" consumer group on
+investigation.tasks: tasks claimed but not yet acknowledged, which is the
+real backlog a human means by "queue depth" here, not raw stream length
+(XLEN would also count tasks already completed and acknowledged).
+*/}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: investigation-worker
+  namespace: legion-investigation
+spec:
+  scaleTargetRef:
+    name: investigation-worker
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  pollingInterval: 10
+  cooldownPeriod: 60
+  triggers:
+    - type: redis-streams
+      metadata:
+        address: "investigation-queue.legion-investigation.svc.cluster.local:{{ .Values.state.investigationQueue.port }}"
+        stream: investigation.tasks
+        consumerGroup: workers
+        pendingEntriesCount: "5"

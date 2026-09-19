@@ -289,9 +289,12 @@ legion/
 ├── deploy/               deployment identity and packaging (ADR-016)
 │   ├── services.yaml     the service set as data: zone, language, source, port
 │   ├── docker/           two parameterised Dockerfiles that build every image
-│   └── observability/    ADR-020 verification stack (Collector, Prometheus,
-│                         Grafana, Elasticsearch, Kibana, Filebeat) — local,
-│                         not the Kubernetes/Helm cluster target
+│   ├── observability/    ADR-020 verification stack (Collector, Prometheus,
+│   │                     Grafana, Elasticsearch, Kibana, Filebeat) — local,
+│   │                     not a deployment
+│   └── kubernetes/       ADR-010/ADR-011 manifests: one Helm chart reading
+│                         services.yaml, NetworkPolicies, a kind config —
+│                         verified against a local cluster, not Hetzner
 ├── docs/
 │   └── adr/              architecture decision records
 ├── Cargo.toml            Rust workspace root
@@ -337,13 +340,17 @@ Directories from the long-term plan that have no implementation purpose yet —
 `infrastructure/`, `security/` — are deliberately absent. Empty directories
 that promise work are worse than no directories.
 
-`deploy/` holds what ADR-016 and ADR-020 specify and nothing else:
-`deploy/services.yaml` declares the service set, `deploy/docker/` holds the
-two parameterised Dockerfiles that build every image from it, and
-`deploy/observability/` is the Docker Compose verification stack (Collector,
-Prometheus, Grafana, Elasticsearch, Kibana, Filebeat). Kubernetes manifests
-and Helm charts are not there yet, by the same rule -- that is the cluster
-half, deliberately parked.
+`deploy/` holds what ADR-016, ADR-020, ADR-010 and ADR-011 specify and
+nothing else: `deploy/services.yaml` declares the service set,
+`deploy/docker/` holds the two parameterised Dockerfiles that build every
+image from it, `deploy/observability/` is the Docker Compose verification
+stack (Collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat), and
+`deploy/kubernetes/` is the cluster half: a kind config, one Helm chart, and
+NetworkPolicies, verified locally rather than against the ADR-010 Hetzner
+target. Terraform for Hetzner itself is not written -- unrun IaC is the same
+kind of unearned claim an empty directory would be, and provisioning real
+cloud infrastructure needs the owner's account and an explicit go-ahead
+before it happens.
 
 ## 9. What is not built
 
@@ -352,8 +359,10 @@ engines and the sentinel all run, and a transaction presented at the edge
 returns a decision.
 
 The following exist only as documented intent: the inference runtime, the
-behavioural agent, Kubernetes manifests, the fraud simulator, the replay
-engine, the evaluation framework and all benchmarks.
+behavioural agent, the fraud simulator, the replay engine, the evaluation
+framework and all benchmarks. Kubernetes manifests are no longer in this
+list -- see the cluster-half paragraph above and `project-plan.md`'s Phase 4
+section for what is now built and verified locally.
 
 The capability runtime (ADR-005) is partially built: `control-plane/capability`
 runs the full enforcement pipeline (identity, grant, scope,

@@ -1,0 +1,31 @@
+{{/*
+One namespace per zone (ADR-016 section 2), derived from deploy/services.yaml
+rather than hand-listed, so a new zone in that file gets a namespace for
+free. legion-state is Zone 5 and is not one of Legion's own deployables, so
+it is declared directly instead.
+*/}}
+{{- $seen := dict -}}
+{{- range $id, $svc := .Values.services -}}
+{{- if not $svc.planned -}}
+{{- $ns := printf "legion-%s" $svc.zone -}}
+{{- if not (hasKey $seen $ns) -}}
+{{- $_ := set $seen $ns true }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    legion.dev/zone: {{ $svc.zone }}
+{{- end -}}
+{{- end -}}
+{{- end }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.state.namespace }}
+  labels:
+    {{- include "legion.labels" . | nindent 4 }}
+    legion.dev/zone: state

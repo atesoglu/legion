@@ -1,0 +1,18 @@
+# Local kind cluster for verifying deploy/kubernetes/ manifests, Helm charts,
+# NetworkPolicies and KEDA -- NOT the ADR-010 target (Hetzner + Terraform,
+# self-managed). This proves the Kubernetes-facing artifacts are correct;
+# it proves nothing about Hetzner-specific cost or operational reality.
+#
+# disableDefaultCNI: kindnet (the default) does not enforce NetworkPolicy at
+# all -- every policy would apply silently and do nothing. Calico is
+# installed instead, specifically so a policy that's wrong is a failed
+# verification, not a false pass.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  disableDefaultCNI: true
+  podSubnet: "10.244.0.0/16"
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker

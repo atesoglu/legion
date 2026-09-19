@@ -1,0 +1,372 @@
+{{/*
+NetworkPolicy set transcribing security-boundaries.md section 2's boundary
+table (ADR-016 section 2 predicts this transcription "almost line for
+line"). Each workload gets its own policy rather than one per namespace,
+because legion-edge/legion-control/legion-investigation each hold more than
+one workload with a different posture (gateway vs dedup-store, orchestrator
+vs capability, controller/worker vs their own queue and store).
+
+This is real NetworkPolicy enforcement (Calico, not kindnet -- see
+deploy/kubernetes/kind-cluster.yaml) but it is only the network layer of
+ADR-011's zero-trust model. ADR-011 itself is explicit that network policy
+alone is "a control on reachability, not on authorisation" -- mTLS and
+workload identity are a separate, later piece of work, deliberately not
+touched here.
+
+Every policy is default-deny by omission: Kubernetes NetworkPolicy is
+allow-list only, so a direction with no rule here is fully denied once any
+policy selects the pod.
+*/}}
+
+# --- legion-edge -------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: gateway
+  namespace: legion-edge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Zone 0 -> 1: the untrusted caller. Nothing upstream of the gateway is
+    # a cluster workload to select on, so this is deliberately unrestricted
+    # by source -- authentication and validation are the gateway's own job,
+    # not the network's (security-boundaries.md section 1).
+    - ports:
+        - protocol: TCP
+          port: {{ (index .Values.services "gateway").port }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: {{ (index .Values.services "orchestrator").port }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.state.dedupStore.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: dedup-store
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.dedupStore.port }}
+    - {{- include "legion.dnsEgressRule" . | nindent 6 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dedup-store
+  namespace: legion-edge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: dedup-store
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.dedupStore.port }}
+  egress: []
+
+# --- legion-control ------------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator
+  namespace: legion-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-edge
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: gateway
+      ports:
+        - protocol: TCP
+          port: {{ (index .Values.services "orchestrator").port }}
+  egress:
+    # Zone 2 -> 3: every data-plane engine and the sentinel.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-data
+      ports:
+        {{- range $id, $svc := .Values.services }}
+        {{- if and (eq $svc.zone "data") (not $svc.planned) }}
+        - protocol: TCP
+          port: {{ $svc.port }}
+        {{- end }}
+        {{- end }}
+    # Zone 2 -> 5: the only path to the feature and lineage stores.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.state.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.featureStore.port }}
+        - protocol: TCP
+          port: {{ .Values.state.lineageStore.port }}
+    # Zone 2 -> 6: one direction, async -- CaseTrigger onto the queue only,
+    # never a connection into the controller or worker themselves.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.state.investigationQueue.namespace }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-queue
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationQueue.port }}
+    - {{- include "legion.dnsEgressRule" . | nindent 6 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: capability
+  namespace: legion-control
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: capability
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    # Zone 6 -> 2, exactly like Zone 4 would: only via the capability
+    # service, never a bare connection to anything else in legion-control.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-investigation
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-worker
+      ports:
+        - protocol: TCP
+          port: {{ (index .Values.services "capability").port }}
+  egress:
+    - {{- include "legion.dnsEgressRule" . | nindent 6 }}
+
+# --- legion-data: Zone 3 makes no outbound calls at all, not even DNS -----
+{{- range $id, $svc := .Values.services }}
+{{- if and (eq $svc.zone "data") (not $svc.planned) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $id }}
+  namespace: legion-data
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $id }}
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: {{ $svc.port }}
+  egress: []
+{{- end }}
+{{- end }}
+
+# --- legion-investigation --------------------------------------------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: investigation-controller
+  namespace: legion-investigation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: investigation-controller
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-queue
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationQueue.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationStore.port }}
+    - {{- include "legion.dnsEgressRule" . | nindent 6 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: investigation-worker
+  namespace: legion-investigation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: investigation-worker
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-queue
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationQueue.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-postgres
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationStore.port }}
+    # Zone 6 -> 2, same posture as Zone 4: only the capability service.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: capability
+      ports:
+        - protocol: TCP
+          port: {{ (index .Values.services "capability").port }}
+    - {{- include "legion.dnsEgressRule" . | nindent 6 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: investigation-queue
+  namespace: legion-investigation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: investigation-queue
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-worker
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+        # KEDA's operator polls this stream's consumer-group lag directly;
+        # it is platform infrastructure, not a Legion zone, same posture as
+        # the observability collector (ADR-020).
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: keda
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationQueue.port }}
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: investigation-postgres
+  namespace: legion-investigation
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: investigation-postgres
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: investigation-worker
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.investigationStore.port }}
+  egress: []
+
+# --- legion-state: Zone 5, reachable only from legion-control -------------
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: feature-store
+  namespace: {{ .Values.state.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: feature-store
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.featureStore.port }}
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: lineage-postgres
+  namespace: {{ .Values.state.namespace }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: lineage-postgres
+  policyTypes: ["Ingress", "Egress"]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: legion-control
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: {{ .Values.state.lineageStore.port }}
+  egress: []

@@ -1,0 +1,145 @@
+{{/*
+One Deployment + Service + ServiceAccount per buildable service (ADR-016
+section 4: one chart iterates the service list, not one subchart per
+service). Planned services (behavioral) have no port and are skipped --
+deploying a service with no code behind it would be the manifest equivalent
+of the empty directories architecture.md already refuses to create.
+
+Health probes are TCP-socket only: they prove the gRPC port is accepting
+connections, not that the service is deeply healthy -- no service
+implements grpc.health.v1 yet. Recorded here rather than overstated as a
+real health check.
+*/}}
+{{- range $id, $svc := .Values.services }}
+{{- if not $svc.planned }}
+{{- $ns := printf "legion-%s" $svc.zone }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $id }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    {{- include "legion.selectorLabels" (dict "id" $id) | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $id }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    {{- include "legion.selectorLabels" (dict "id" $id) | nindent 4 }}
+spec:
+  selector:
+    {{- include "legion.selectorLabels" (dict "id" $id) | nindent 4 }}
+  ports:
+    - name: grpc
+      port: {{ $svc.port }}
+      targetPort: {{ $svc.port }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $id }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    {{- include "legion.selectorLabels" (dict "id" $id) | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "legion.selectorLabels" (dict "id" $id) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "legion.labels" $ | nindent 8 }}
+        {{- include "legion.selectorLabels" (dict "id" $id) | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $id }}
+      # terminationGracePeriodSeconds exceeds shutdownGracePeriod, same
+      # invariant config.Service.validate() enforces for the deadline itself
+      # (ADR-010: shutdown must outlast an in-flight request).
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+      containers:
+        - name: {{ $id }}
+          image: "{{ $.Values.imageRepository }}/{{ $id }}:{{ $.Values.imageTag }}"
+          imagePullPolicy: {{ $.Values.imagePullPolicy }}
+          ports:
+            - name: grpc
+              containerPort: {{ $svc.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
+          {{- if not (or (eq $id "investigation-controller") (eq $id "investigation-worker")) }}
+          # investigation-controller and investigation-worker are pure queue
+          # consumers (ADR-017): neither binds its declared port, so a TCP
+          # probe against it would only ever fail. No probe is not the same
+          # as "healthy" -- it is an honest absence, recorded as a known gap
+          # rather than a probe faked to pass.
+          readinessProbe:
+            tcpSocket:
+              port: {{ $svc.port }}
+            initialDelaySeconds: 1
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: {{ $svc.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- end }}
+          env:
+            - name: LEGION_LISTEN_ADDRESS
+              # Rust's SocketAddr parser (unlike Go's net.Listen) rejects the
+              # bare ":PORT" shorthand and needs an explicit address.
+              value: "0.0.0.0:{{ $svc.port }}"
+            - name: LEGION_LOG_LEVEL
+              value: {{ $.Values.logLevel | quote }}
+            - name: LEGION_REQUEST_DEADLINE
+              value: {{ $.Values.requestDeadline | quote }}
+            - name: LEGION_SHUTDOWN_GRACE_PERIOD
+              value: {{ $.Values.shutdownGracePeriod | quote }}
+            {{- if eq $id "gateway" }}
+            - name: LEGION_ORCHESTRATOR_ENDPOINT
+              value: "orchestrator.legion-control.svc.cluster.local:{{ (index $.Values.services "orchestrator").port }}"
+            - name: LEGION_IDEMPOTENCY_STORE
+              value: "dedup-store.{{ $.Values.state.dedupStore.namespace }}.svc.cluster.local:{{ $.Values.state.dedupStore.port }}"
+            - name: LEGION_API_KEYS
+              value: {{ $.Values.apiKeys | quote }}
+            {{- else if eq $id "orchestrator" }}
+            - name: LEGION_AGENT_ENDPOINTS
+              value: {{ include "legion.agentEndpoints" $ | quote }}
+            - name: LEGION_SENTINEL_ENDPOINT
+              value: "sentinel.legion-data.svc.cluster.local:{{ (index $.Values.services "sentinel").port }}"
+            - name: LEGION_FEATURE_STORE
+              value: "feature-store.{{ $.Values.state.namespace }}.svc.cluster.local:{{ $.Values.state.featureStore.port }}"
+            - name: LEGION_LINEAGE_STORE
+              value: "postgres://legion:legion@lineage-postgres.{{ $.Values.state.namespace }}.svc.cluster.local:{{ $.Values.state.lineageStore.port }}/{{ $.Values.state.lineageStore.database }}?sslmode=disable"
+            - name: LEGION_INVESTIGATION_QUEUE
+              value: "investigation-queue.{{ $.Values.state.investigationQueue.namespace }}.svc.cluster.local:{{ $.Values.state.investigationQueue.port }}"
+            {{- else if eq $id "investigation-controller" }}
+            - name: LEGION_INVESTIGATION_STORE
+              value: "postgres://legion:legion@investigation-postgres.{{ $.Values.state.investigationStore.namespace }}.svc.cluster.local:{{ $.Values.state.investigationStore.port }}/{{ $.Values.state.investigationStore.database }}?sslmode=disable"
+            - name: LEGION_INVESTIGATION_QUEUE
+              value: "investigation-queue.{{ $.Values.state.investigationQueue.namespace }}.svc.cluster.local:{{ $.Values.state.investigationQueue.port }}"
+            {{- else if eq $id "investigation-worker" }}
+            - name: LEGION_INVESTIGATION_STORE
+              value: "postgres://legion:legion@investigation-postgres.{{ $.Values.state.investigationStore.namespace }}.svc.cluster.local:{{ $.Values.state.investigationStore.port }}/{{ $.Values.state.investigationStore.database }}?sslmode=disable"
+            - name: LEGION_INVESTIGATION_QUEUE
+              value: "investigation-queue.{{ $.Values.state.investigationQueue.namespace }}.svc.cluster.local:{{ $.Values.state.investigationQueue.port }}"
+            - name: LEGION_CAPABILITY_RUNTIME
+              value: "capability.legion-control.svc.cluster.local:{{ (index $.Values.services "capability").port }}"
+            {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,10 @@
+apiVersion: v2
+name: legion
+description: >-
+  Legion's Kubernetes packaging (ADR-010, ADR-016). One chart iterates
+  deploy/services.yaml rather than one subchart per service, per ADR-016's
+  own reasoning: six of the nine buildable services are stateless gRPC
+  services differing only in name, port and zone.
+type: application
+version: 0.1.0
+appVersion: "dev"

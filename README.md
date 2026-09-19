@@ -10,7 +10,7 @@ claims.
 
 ---
 
-## Status: Phase 4 (observability half) — in progress
+## Status: Phase 4 — observability half done, cluster half built and locally verified
 
 A transaction presented at the gateway returns a decision, with reason codes and
 a per-agent contribution breakdown, and **no AI in the path**. The chain is
@@ -21,8 +21,17 @@ investigation, capability-checked at every tool call.
 Phases 0–2 are complete. Phase 4's observability half is nearly done: the
 services now emit metrics, logs and traces, `deploy/observability/` proves
 all three are collectible (a real counter in Prometheus, a real log line in
-Kibana, a real trace with its error status in Elasticsearch), and the
-cluster half is deferred. Phases 3, 5, 6 and 7 have not started.
+Kibana, a real trace with its error status in Elasticsearch). The cluster
+half is built too: `deploy/kubernetes/` holds manifests, a Helm chart, and
+NetworkPolicies, verified against a local `kind` cluster (Calico as the
+CNI, since kindnet does not enforce `NetworkPolicy` at all) -- a real
+transaction produces a real decision through the cluster network, a
+forbidden path was checked to actually time out, and KEDA scales the
+investigation worker on a real, injected Redis Streams backlog. This is
+local verification, not the ADR-010 Hetzner target, which needs the owner's
+account and an explicit go-ahead before it is provisioned. Secret
+management and ADR-011 mTLS/workload identity remain unbuilt. Phases 3, 5,
+6 and 7 have not started.
 
 | | |
 |---|---|
@@ -36,7 +45,8 @@ cluster half is deferred. Phases 3, 5, 6 and 7 have not started.
 | Capability runtime | Full enforcement pipeline (identity, grant, scope, constraint, budget; ADR-005) against a static manifest; one real caller (`investigation/worker`); no caller yet on the fixed-enum path (deterministic agents are push-style, behavioural agent doesn't exist) |
 | Investigation plane (Zone 6) | Case creation, task queue and generic worker run end to end for two seeded, mocked agents (device, velocity; ADR-017), every tool call checked by the capability runtime; `RegisterAgent` API and real tool/model calls not implemented |
 | Observability | **Partly built** (ADR-020): the Go services emit counters for the previously silent failures — lineage and case-trigger drops, dead-lettered tasks, capability verdicts, dedup outcomes, breaker transitions — and latency histograms end-to-end, per stage and per agent, with ADR-009's 80 ms deadline as an explicit bucket boundary. Tracing is built too: gRPC interceptors and Redis Streams field propagation carry one `trace_id` from a decision to the case and tasks it opens, with sampling decided centrally by the collector's `tail_sampling` processor (errors always kept). `deploy/observability/` (Collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat) is built and was verified against a live `gateway` container, including a real trace — but that is a local run, not a deployment: nothing outside it sets `LEGION_OTLP_ENDPOINT`, there is no dashboard or alerting, and multi-hop trace continuity is unit-tested rather than exercised live. Zone 3 emits nothing by design |
-| Behavioural agent, Kubernetes, replay, evaluation, benchmarks | Not implemented |
+| Kubernetes (cluster half) | **Built, verified against a local `kind` cluster** (`deploy/kubernetes/`): one Helm chart reading `deploy/services.yaml` directly, NetworkPolicies checked to actually deny an unauthorised pod (and, just as informative, checked to allow one relabelled to impersonate an authorised identity — ADR-011's own point that network policy alone is reachability, not authorisation), KEDA scaling `investigation-worker` on a real injected backlog. Not the ADR-010 Hetzner target; secret management and ADR-011 mTLS/workload identity are unbuilt |
+| Behavioural agent, replay, evaluation, benchmarks | Not implemented |
 
 **No performance, detection-quality or security claim in this repository is
 currently supported by measurement, and none is made.** That is the point of the
@@ -139,6 +149,8 @@ deploy/           deployment identity and packaging (ADR-016)
   docker/         two parameterised Dockerfiles that build every image
   observability/  ADR-020 verification stack: Collector, Prometheus, Grafana,
                   Elasticsearch, Kibana, Filebeat — local, not the cluster target
+  kubernetes/     ADR-010/ADR-011 manifests: one Helm chart, NetworkPolicies,
+                  a kind config — verified locally, not the Hetzner target
 test/e2e/         cross-service suite: starts the real binaries
 docs/             architecture documentation and ADRs
 ```
@@ -188,7 +200,7 @@ Restructured 2026-09-16 to fold in an investigation/case-management scope
 | 1 | Deterministic pipeline, feature store, pseudonymisation, decision lineage, cross-service tests | **Complete** |
 | 2 | Capability runtime, transaction idempotency, Postgres agent registry, case management, task queue, first investigation agent | **Complete** — transaction idempotency (ADR-019), the investigation plane's case/task/worker loop (ADR-017, two seeded agents) and the capability runtime (ADR-005) all shipped. Known gaps carried into later phases: no `RegisterAgent` API, no mTLS/workload identity (still the Phase 1 shared-key/caller-asserted stand-in), no durable capability audit storage, and every investigation agent's tool/model call is mocked pending Phase 3's shared inference runtime |
 | 3 | Behavioural SLM agent, shared inference (now serving investigation agents too) | Not started |
-| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | **In progress, split in two.** Built: the OpenTelemetry pipeline in the shared process lifecycle, counters for the previously silent failures, latency histograms, ADR-016 packaging, `deploy/observability/` (verified: a live gateway container's counter read back from Prometheus, its log line from Elasticsearch), and tracing (gRPC interceptors plus Redis Streams field propagation across the investigation plane, sampled centrally by the collector; a live single-hop trace with an error status was read back from Elasticsearch, multi-hop continuity is unit-tested). Not built: any dashboard or alerting on top of Grafana. The cluster half — manifests, Helm, network policies, KEDA — and ADR-011's mTLS are deferred, since neither can be verified without a cluster |
+| 4 | Kubernetes, zero trust, observability (decision path and investigation path), autoscaling | **Mostly built, split in three.** Observability: the OpenTelemetry pipeline, counters for the previously silent failures, latency histograms, ADR-016 packaging, `deploy/observability/` (verified: a live gateway container's counter, log line and trace read back from Prometheus/Kibana/Elasticsearch); no dashboard or alerting yet. Cluster: manifests, a Helm chart reading `deploy/services.yaml`, and NetworkPolicies, verified against a local `kind` cluster (a real transaction produced a real decision through the cluster network; a forbidden path was checked to actually time out; KEDA scaled the investigation worker on a real injected backlog) — not the ADR-010 Hetzner target, and secret management is unbuilt. Deferred: ADR-011's mTLS and workload identity, which is the identity layer NetworkPolicy alone does not provide |
 | 5 | Fraud simulator, scenario DSL, evaluation, replay, shadow mode, investigation-quality evaluation | Not started |
 | 6 | Failure injection, adversarial scenarios, resilience measurement — decision path and investigation path | Not started |
 | 7 | Benchmarks, cost-per-investigation, results, portfolio release | Not started |

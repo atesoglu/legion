@@ -1,18 +1,24 @@
 # Security boundaries
 
-Status: Phase 2. The Zone 0 boundary is enforced: callers authenticate, every
-field is validated, and an identifier that is not a pseudonym is rejected before
-it enters the platform. Everything between zones is still open — services speak
-plaintext gRPC and hold no workload identity. Capability enforcement (ADR-005)
-is partially built: `control-plane/capability` runs and is enforced for Zone 6's
-tool calls, but nothing on the real-time deterministic/behavioural path calls
-it yet. Network, identity and workload hardening are Phase 4. Of those, only
-the observability boundary has been decided (ADR-020) and only its emitting
-half built: services push OTLP outbound when configured to, and nothing
-receives it. Zone 6
-(investigation, ADR-017) is partially built: the controller, generic worker,
-task queue and Postgres schema all run; the tool/model calls it makes are
-still mocked.
+Status: Phase 2 for the boundaries below; Phase 4 partially built on top of
+them. The Zone 0 boundary is enforced: callers authenticate, every field is
+validated, and an identifier that is not a pseudonym is rejected before it
+enters the platform. Services still speak plaintext gRPC between themselves
+and hold no workload identity -- that part of Phase 4 (ADR-011 mTLS) is
+deliberately not built yet. Network segmentation is: `deploy/kubernetes/`'s
+NetworkPolicies transcribe the boundary table below almost line for line
+(ADR-016), verified against a local cluster to actually deny what they
+declare, not only to declare it -- but network policy is reachability, not
+authorisation, which is exactly ADR-011's own point and why the identity
+layer above is still open. Capability enforcement (ADR-005) is partially
+built: `control-plane/capability` runs and is enforced for Zone 6's tool
+calls, but nothing on the real-time deterministic/behavioural path calls it
+yet. The observability boundary (ADR-020) is built and verified locally,
+both halves: the collector receives what every zone pushes, and Elasticsearch/
+Prometheus/Kibana were each confirmed to hold real data, not only accept a
+connection. Zone 6 (investigation, ADR-017) is partially built: the
+controller, generic worker, task queue and Postgres schema all run; the
+tool/model calls it makes are still mocked.
 
 ## 1. Trust zones
 

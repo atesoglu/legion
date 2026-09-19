@@ -1,0 +1,107 @@
+{{/*
+Stateful dependencies that are not Legion's own deployables (Redis and
+Postgres), so they are not in deploy/services.yaml and are declared here
+directly. Plain Deployments, not StatefulSets: this is local verification of
+the manifests above, not the ADR-010 production target, and none of these
+five instances needs more than one replica to prove a NetworkPolicy or a
+KEDA scaler works.
+
+Placement follows security-boundaries.md's zones, not convenience:
+feature-store and lineage-postgres are Zone 5 (legion-state, reachable only
+from legion-control); dedup-store is the gateway's own Zone 1 state
+(ADR-019: dedup lives at the edge, never the orchestrator); the
+investigation queue and its Postgres are Zone 6's own store (ADR-017 --
+forbidden from ever being the Zone 5 store).
+*/}}
+{{- $deps := list
+  (dict "name" "feature-store" "namespace" $.Values.state.namespace "image" "redis:7-alpine" "port" (int $.Values.state.featureStore.port) "pvc" false)
+  (dict "name" "lineage-postgres" "namespace" $.Values.state.namespace "image" "postgres:16-alpine" "port" (int $.Values.state.lineageStore.port) "pvc" true)
+  (dict "name" "dedup-store" "namespace" $.Values.state.dedupStore.namespace "image" "redis:7-alpine" "port" (int $.Values.state.dedupStore.port) "pvc" false)
+  (dict "name" "investigation-queue" "namespace" $.Values.state.investigationQueue.namespace "image" "redis:7-alpine" "port" (int $.Values.state.investigationQueue.port) "pvc" false)
+  (dict "name" "investigation-postgres" "namespace" $.Values.state.investigationStore.namespace "image" "postgres:16-alpine" "port" (int $.Values.state.investigationStore.port) "pvc" true)
+-}}
+{{- range $dep := $deps }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $dep.name }}
+  namespace: {{ $dep.namespace }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $dep.name }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $dep.name }}
+  ports:
+    - port: {{ $dep.port }}
+      targetPort: {{ $dep.port }}
+{{- if $dep.pvc }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $dep.name }}
+  namespace: {{ $dep.namespace }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $dep.name }}
+  namespace: {{ $dep.namespace }}
+  labels:
+    {{- include "legion.labels" $ | nindent 4 }}
+    app.kubernetes.io/name: {{ $dep.name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $dep.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "legion.labels" $ | nindent 8 }}
+        app.kubernetes.io/name: {{ $dep.name }}
+    spec:
+      containers:
+        - name: {{ $dep.name }}
+          image: {{ $dep.image }}
+          {{- if and (not $dep.pvc) (ne $dep.port 6379) }}
+          # The stock redis image always listens on 6379 regardless of what
+          # containerPort says; ports other than the default (dedup-store,
+          # investigation-queue) must be told explicitly.
+          command: ["redis-server", "--port", {{ $dep.port | quote }}]
+          {{- end }}
+          ports:
+            - containerPort: {{ $dep.port }}
+          {{- if $dep.pvc }}
+          env:
+            - name: POSTGRES_USER
+              value: legion
+            - name: POSTGRES_PASSWORD
+              value: legion
+            - name: POSTGRES_DB
+              value: legion
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          {{- end }}
+      {{- if $dep.pvc }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ $dep.name }}
+      {{- end }}
+{{- end }}

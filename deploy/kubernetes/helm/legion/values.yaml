@@ -1,0 +1,51 @@
+# Chart-level defaults. deploy/services.yaml is passed as a SECOND values
+# file at install time (-f ../../services.yaml) and populates .Values.services
+# -- this file never repeats a service's zone, port or language, only the
+# Kubernetes-specific knobs ADR-016 left for Phase 4 to decide.
+#
+#   helm template legion deploy/kubernetes/helm/legion \
+#     -f deploy/services.yaml -f deploy/kubernetes/helm/legion/values.yaml
+
+imageRepository: legion
+imageTag: dev
+imagePullPolicy: IfNotPresent
+
+# Uniform for every service on purpose: nothing has been benchmarked
+# in-cluster yet (ADR-010's own "Revisit if" condition). Per-service sizing
+# is a Phase 5 measurement question, not a guess made now.
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi
+
+logLevel: info
+requestDeadline: 80ms
+shutdownGracePeriod: 10s
+
+# Local verification only -- not a secret worth protecting, same posture as
+# deploy/observability/'s .env. A real deployment replaces this entirely.
+apiKeys: "smoke-test-caller=01234567890123456789012345678901"
+
+# Zone 5 (security-boundaries.md): reachable only from legion-control, holds
+# no Legion workloads of its own. Not derived from services.yaml because it
+# is not one of Legion's own deployables.
+state:
+  namespace: legion-state
+  featureStore:
+    port: 6379
+  dedupStore:
+    namespace: legion-edge
+    port: 6380
+  lineageStore:
+    port: 5432
+    database: legion
+  investigationQueue:
+    namespace: legion-investigation
+    port: 6381
+  investigationStore:
+    namespace: legion-investigation
+    port: 5432
+    database: legion

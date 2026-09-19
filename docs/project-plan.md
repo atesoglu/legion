@@ -1512,14 +1512,15 @@ the same shared model server.**
 
 ## Phase 4 — Kubernetes, Zero-Trust Deployment & Observability
 
-**Phase 4 is being taken in two parts, and only the first is in progress.**
-The observability half (ADR-020) plus the packaging ADR-016 already specifies
-comes first, because every remaining gap carried forward from Phases 1 and 2
-terminates in it: a silent lineage-queue drop can only be fixed by counting
-it, a dead-lettered investigation task is invisible, and ADR-009's 80 ms
-budget has never been measured. The cluster half — manifests, Helm, network
-policies, KEDA — and ADR-011's mTLS/workload identity are deliberately
-deferred, since neither can be verified without a cluster.
+**Phase 4 was taken in parts; two of three are now built.** The observability
+half (ADR-020) plus the packaging ADR-016 already specifies came first,
+because every remaining gap carried forward from Phases 1 and 2 terminated in
+it. The cluster half — manifests, Helm, network policies, KEDA — followed,
+verified against a local `kind` cluster rather than the ADR-010 Hetzner
+target, which needs the owner's account and an explicit go-ahead before any
+real money is spent on it. ADR-011's mTLS and workload identity remain
+deliberately deferred: NetworkPolicy is only the network layer of that ADR,
+and the identity layer is a separably large piece of work.
 
 Progress within the first half:
 
@@ -1531,7 +1532,7 @@ Progress within the first half:
 | ADR-016 packaging: Dockerfiles, `deploy/services.yaml`, the buildable-vs-declared check | Built |
 | `deploy/observability/`: collector, Prometheus, Grafana, Elasticsearch, Kibana, Filebeat | Built, verified: a running `gateway` container's counter was read back from Prometheus's own API, and its log line from Elasticsearch |
 | Tracing and correlation identifiers | Built, verified for one hop: gRPC interceptors and Redis Streams field propagation carry a trace across the decision and investigation planes; a live single-hop trace (error status included) was read back from Elasticsearch through the collector's `tail_sampling` processor. Multi-hop continuity is unit-tested, not exercised live |
-| Kubernetes manifests, Helm, network policies, KEDA | Deferred (cluster half) |
+| Kubernetes manifests, Helm, network policies, KEDA | Built and verified separately, against a local cluster -- see below, this row is the observability half's own tracking table and predates that work |
 
 The observability half is otherwise complete. **Backlog, added after the
 fact rather than part of the original plan**: a dashboard in Grafana and
@@ -1546,16 +1547,72 @@ The local stack proves the pipeline works end to end; no real deployment runs
 it continuously, so no figure from §28's list can be reported from a live
 system yet. Zone 3 emits nothing by design (ADR-020).
 
+**The cluster half is now built and verified against a local cluster.**
+`deploy/kubernetes/` holds a kind config (Calico as the CNI instead of
+kindnet, specifically because kindnet does not enforce `NetworkPolicy` at
+all -- a policy would apply silently and do nothing) and one Helm chart
+that reads `deploy/services.yaml` directly as a second `-f` values file, per
+ADR-016 section 4's own instruction not to invent a second service list.
+This is local verification, the same relationship `deploy/observability/`
+has to a real deployment -- it proves the manifests, policies and autoscaler
+are correct, not anything Hetzner-specific (a self-managed control plane's
+operational cost, real inter-node latency, an actual Terraform apply).
+Provisioning Hetzner itself needs the owner's account and an explicit
+go-ahead to spend real money, and is not part of this work.
+
+Verified, not just declared:
+- All 14 workloads (9 Legion services + 3 Redis + 2 Postgres) reach
+  `Running`/`1/1` across 5 namespaces (`legion-edge/control/data/
+  investigation` + `legion-state` for Zone 5, ADR-016 section 2's own
+  zone-to-namespace mapping).
+- A real, well-formed transaction produces a real decision end to end
+  through the cluster network (gateway to orchestrator to velocity/device/
+  geo/sentinel, feature store reachable, dedup store reachable).
+- NetworkPolicy actually blocks what it declares, checked from an
+  unauthorised pod, not just read off the manifest: a connection to
+  `sentinel` and to `feature-store` both timed out from a pod with no
+  matching label. Also demonstrated, and worth being honest about: relabelling
+  that same pod to impersonate an authorised workload's identity was enough
+  to pass the same check -- exactly ADR-011's own point that network policy
+  is "a control on reachability, not on authorisation," and the reason mTLS
+  and workload identity (not attempted here) are a separate, later piece of
+  work.
+- KEDA scales `investigation-worker` on a real Redis Streams pending-entries
+  count, not a synthetic metric: an injected backlog of 12 genuinely pending
+  task-queue entries produced a real `SuccessfulRescale` HPA event (`New
+  size: 3`), and the backlog drained to zero once the new replicas started
+  consuming it.
+
+Known gaps, not silently closed:
+- **Secret management is not built.** Every credential in the local chart
+  (Postgres password, `LEGION_API_KEYS`) is a plain environment variable,
+  same posture as `deploy/observability/`'s `.env` -- acceptable for a local
+  cluster nobody else can reach, not for Hetzner.
+- **mTLS and workload identity (ADR-011) are untouched.** NetworkPolicy is
+  the network layer only; the identity layer is separate, deliberately
+  deferred work.
+- Health probes are TCP-socket only (no service implements `grpc.health.v1`
+  yet), and `investigation-controller`/`investigation-worker` have no probe
+  at all -- they are pure queue consumers with no listening port to probe,
+  and a probe against a port nothing binds would only ever fail.
+- Observability is not wired into the cluster. The six-step observability
+  half (this same document, above) was built and verified as its own local
+  Docker Compose stack; nothing here pushes OTLP from inside `kind`.
+
 Implement:
 
-* Kubernetes manifests;
-* Helm;
-* network policies;
-* workload isolation, extended to Zone 6;
-* secret management;
-* resource limits;
-* health probes;
-* KEDA, including worker autoscaling on investigation queue depth (§50);
+* Kubernetes manifests -- **built and verified** (`deploy/kubernetes/helm/legion`);
+* Helm -- **built and verified**, one chart, not one per service (ADR-016);
+* network policies -- **built and verified**, checked to actually deny, not
+  only declared;
+* workload isolation, extended to Zone 6 -- **built**: `legion-investigation`
+  is its own namespace with its own NetworkPolicies, same as every other zone;
+* secret management -- not built (see gaps above);
+* resource limits -- **built**: uniform requests/limits, unbenchmarked, same
+  posture ADR-010 itself expects to revisit after Phase 7;
+* health probes -- **built**, TCP-socket only (see gaps above);
+* KEDA, including worker autoscaling on investigation queue depth (§50) --
+  **built and verified** against a real, injected backlog;
 * **observability**, to the full depth specified in §28 and restated in
   `investigation-model.md` §"Observability and cost": correlation identifiers
   on every request (`request_id`, `trace_id`, `transaction_id`, `case_id`,
@@ -1563,7 +1620,8 @@ Implement:
   metrics list in §28 extended with the task/queue/LLM/tool metrics in
   `investigation-model.md`, and OpenTelemetry spans covering the
   investigation path (controller → task → worker → tool → LLM → finding) the
-  same way they cover the decision path.
+  same way they cover the decision path. Built as its own local stack
+  (`deploy/observability/`), not yet wired into `deploy/kubernetes/`.
 
 Target:
 
